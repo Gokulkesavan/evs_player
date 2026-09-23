@@ -394,67 +394,57 @@ const EVS_WASM = {
   _usedOnce: false,
 
   
-      async init(scriptUrl = 'EVS_dec.js') {
+        async init(scriptUrl = 'EVS_dec.js') {
     this.status = 'loading';
     this.updateUI();
 
     try {
-      if (this._usedOnce) {
-        this.module = null;
-        document.querySelectorAll('script[data-evs]').forEach(el => el.remove());
-        delete window.Module;
-        window.Module = window.__makeModuleConfig ? window.__makeModuleConfig()
-                                                  : { noInitialRun: true };
-        window.__evsModuleReady = false;
-        window.__evsModuleError = null;
-      }
+      // Fresh config for the glue's `var Module = typeof Module != "undefined" ? Module : {};`
+      const modCfg = window.__makeModuleConfig();
+      this.module = modCfg;
 
-      if (typeof createEvsDecModule === 'function') {
-        this.module = await createEvsDecModule();
-        this.status = 'ready';
-        this.updateUI();
-        return;
-      }
+      // Wait for Emscripten's runtimeInitialized callback (or an abort).
+      const readyPromise = new Promise((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error(window.__evsModuleError || 'WASM init timeout (20 s)')),
+          20000);
+        window.addEventListener('evs-module-ready', () => { clearTimeout(timer); resolve(); }, { once: true });
+        window.addEventListener('evs-module-error',
+          (e) => { clearTimeout(timer); reject(new Error((e.detail && e.detail.message) || 'wasm aborted')); },
+          { once: true });
+      });
 
-      if (!window.__evsModuleReady) {
-        const readyPromise = new Promise((resolve, reject) => {
-          const timer = setTimeout(() => {
-            const err = window.__evsModuleError
-              || 'timeout after 20s — open DevTools Console, look for [evs] lines';
-            reject(new Error(err));
-          }, 20000);
+      // Fetch the glue source as text.
+      const res = await fetch(scriptUrl, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${scriptUrl}`);
+      const src = await res.text();
 
-          window.addEventListener('evs-module-ready', () => {
-            clearTimeout(timer); resolve();
-          }, { once: true });
+      // The glue declares `class EmscriptenEH{}` and many top-level `var`s.
+      // Re-executing it as a classic <script> throws
+      //   "Identifier 'EmscriptenEH' has already been declared".
+      // Running it inside `new Function` gives a fresh lexical scope every time.
+      //
+      // We also need FS / callMain / HEAPU8 back out — they're locals of that
+      // function now, not `window` properties — so append a small sink block.
+      const sink = { FS: null, callMain: null, getHeapU8: () => null };
+      const tail =
+        '\n' +
+        'sink.FS       = (typeof FS       !== "undefined") ? FS       : null;\n' +
+        'sink.callMain = (typeof callMain !== "undefined") ? callMain : null;\n' +
+        'sink.getHeapU8 = function () { return (typeof HEAPU8 !== "undefined") ? HEAPU8 : null; };\n' +
+        '//# sourceURL=' + scriptUrl;
 
-          window.addEventListener('evs-module-error', (e) => {
-            clearTimeout(timer);
-            reject(new Error(e.detail && e.detail.message || 'wasm aborted'));
-          }, { once: true });
-        });
+      const runner = new Function('Module', 'sink', src + tail);
+      runner(modCfg, sink);
 
-        if (!document.querySelector(`script[data-evs="${scriptUrl}"]`)) {
-          const s = document.createElement('script');
-          s.src = scriptUrl;
-          s.dataset.evs = scriptUrl;
-          s.onerror = () => {
-            this.status = 'error';
-            this.errorMsg = `Cannot fetch ${scriptUrl} — is it in the same folder?`;
-            this.updateUI();
-          };
-          document.head.appendChild(s);
-        }
-        await readyPromise;
-      }
+      await readyPromise;
 
-      this.module = window.Module;
-      if (!this.module.FS       && typeof window.FS       !== 'undefined') this.module.FS       = window.FS;
-      if (!this.module.callMain && typeof window.callMain !== 'undefined') this.module.callMain = window.callMain;
-      if (!this.module.HEAPU8   && typeof window.HEAPU8   !== 'undefined') this.module.HEAPU8   = window.HEAPU8;
-      if (!this.module.ccall    && typeof window.ccall    !== 'undefined') this.module.ccall    = window.ccall;
+      // Re-home the runtime objects onto our Module handle.
+      if (sink.FS)       this.module.FS       = sink.FS;
+      if (sink.callMain) this.module.callMain = sink.callMain;
+      this._getHeapU8 = sink.getHeapU8;
 
-      if (!this.module.FS) throw new Error('FS global missing — wasm failed before init finished');
+      if (!this.module.FS) throw new Error('FS global missing after init');
       this.status = 'ready';
     } catch (e) {
       this.status = 'error';
@@ -506,10 +496,13 @@ const EVS_WASM = {
 
     FS.writeFile(inPath, evsMimeBytes);
 
-    try {
-            if (typeof this.module.callMain === 'function') {
-        // Reference CLI: EVS_dec <input> <output>
-        this.module.callMain([inPath, outPath]);
+            try {
+      if (typeof this.module.callMain === 'function') {
+        // Reference CLI: EVS_dec [Options] Fs bitstream_file output_file
+        // -mime → use the #!EVS_MC1.0 MIME parser (matches what buildEvsMimeFile emits)
+        // -q    → quiet (no per-frame counter spam)
+        const fsKhz = Math.round(outputRate / 1000);  // 8 / 16 / 32 / 48
+        this.module.callMain(['-mime', '-q', String(fsKhz), inPath, outPath]);
       } else {
         throw new Error('callMain not available on Module.');
       }
