@@ -5,15 +5,38 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>EVS PCAP Extractor & WASM Decoder → WAV</title>
 <script>
-  window.Module = {
-    noInitialRun: true,
-    print:    (...a) => console.log('[evs]', ...a),
-    printErr: (...a) => console.warn('[evs]', ...a),
-    onRuntimeInitialized() {
-      window.__evsModuleReady = true;
-      window.dispatchEvent(new Event('evs-module-ready'));
+  (function () {
+    function makeModuleConfig() {
+      return {
+        noInitialRun: true,
+        print:    (...a) => console.log('[evs]', ...a),
+        printErr: (...a) => console.warn('[evs]', ...a),
+        onAbort(what) {
+          const msg = (what && what.message) ? what.message : String(what);
+          console.error('[evs] ABORT:', msg);
+          window.__evsModuleError = msg;
+          window.dispatchEvent(new CustomEvent('evs-module-error', { detail: { message: msg } }));
+        },
+        onExit(code) {
+          console.warn('[evs] onExit code=', code);
+        },
+        onRuntimeInitialized() {
+          window.__evsModuleReady = true;
+          window.dispatchEvent(new Event('evs-module-ready'));
+        }
+      };
     }
-  };
+    window.__makeModuleConfig = makeModuleConfig;
+    window.Module = makeModuleConfig();
+
+    // Unhandled promise rejections from `createWasm().then(()=>run())` land here.
+    window.addEventListener('unhandledrejection', (ev) => {
+      const msg = (ev.reason && ev.reason.message) ? ev.reason.message : String(ev.reason);
+      console.error('[evs] unhandled rejection:', msg);
+      window.__evsModuleError = msg;
+      window.dispatchEvent(new CustomEvent('evs-module-error', { detail: { message: msg } }));
+    });
+  })();
 </script>
 <style>
 :root{
@@ -371,38 +394,21 @@ const EVS_WASM = {
   _usedOnce: false,
 
   
-    async init(scriptUrl = 'EVS_dec.js') {
+      async init(scriptUrl = 'EVS_dec.js') {
     this.status = 'loading';
     this.updateUI();
 
     try {
-      // If we already ran once, tear down and start fresh.
-      // The reference decoder keeps static state across callMain() calls.
       if (this._usedOnce) {
         this.module = null;
-
-        // *** THE FIX *** — remove the previously-injected <script> tag so
-        // that re-appending it below actually triggers a fresh fetch + execute
-        // of the Emscripten glue (which re-instantiates the wasm).
-        // Without this, the guard `!document.querySelector(...)` skips the
-        // re-append, the `evs-module-ready` event never fires, and the
-        // readyPromise times out after 20 s.
         document.querySelectorAll('script[data-evs]').forEach(el => el.remove());
-
         delete window.Module;
-        window.Module = {
-          noInitialRun: true,
-          print:    (...a) => console.log('[evs]', ...a),
-          printErr: (...a) => console.warn('[evs]', ...a),
-          onRuntimeInitialized() {
-            window.__evsModuleReady = true;
-            window.dispatchEvent(new Event('evs-module-ready'));
-          }
-        };
+        window.Module = window.__makeModuleConfig ? window.__makeModuleConfig()
+                                                  : { noInitialRun: true };
         window.__evsModuleReady = false;
+        window.__evsModuleError = null;
       }
 
-      // Modularized build? (won't be, in your case)
       if (typeof createEvsDecModule === 'function') {
         this.module = await createEvsDecModule();
         this.status = 'ready';
@@ -410,11 +416,22 @@ const EVS_WASM = {
         return;
       }
 
-      // Classic build: load script, wait for onRuntimeInitialized
       if (!window.__evsModuleReady) {
         const readyPromise = new Promise((resolve, reject) => {
-          window.addEventListener('evs-module-ready', resolve, { once: true });
-          setTimeout(() => reject(new Error('WASM init timeout (20 s)')), 20000);
+          const timer = setTimeout(() => {
+            const err = window.__evsModuleError
+              || 'timeout after 20s — open DevTools Console, look for [evs] lines';
+            reject(new Error(err));
+          }, 20000);
+
+          window.addEventListener('evs-module-ready', () => {
+            clearTimeout(timer); resolve();
+          }, { once: true });
+
+          window.addEventListener('evs-module-error', (e) => {
+            clearTimeout(timer);
+            reject(new Error(e.detail && e.detail.message || 'wasm aborted'));
+          }, { once: true });
         });
 
         if (!document.querySelector(`script[data-evs="${scriptUrl}"]`)) {
@@ -432,25 +449,19 @@ const EVS_WASM = {
       }
 
       this.module = window.Module;
-
-      // The glue was built without EXPORTED_RUNTIME_METHODS, so FS / callMain /
-      // HEAPU8 live only as globals. Copy them onto Module so the rest of the
-      // code can use this.module.FS / .callMain without knowing the difference.
       if (!this.module.FS       && typeof window.FS       !== 'undefined') this.module.FS       = window.FS;
       if (!this.module.callMain && typeof window.callMain !== 'undefined') this.module.callMain = window.callMain;
       if (!this.module.HEAPU8   && typeof window.HEAPU8   !== 'undefined') this.module.HEAPU8   = window.HEAPU8;
       if (!this.module.ccall    && typeof window.ccall    !== 'undefined') this.module.ccall    = window.ccall;
 
-      if (!this.module.FS) {
-        throw new Error('FS global missing — wasm failed before init finished');
-      }
+      if (!this.module.FS) throw new Error('FS global missing — wasm failed before init finished');
       this.status = 'ready';
     } catch (e) {
       this.status = 'error';
       this.errorMsg = e.message || String(e);
     }
     this.updateUI();
-  },
+  },,
   loadScript() { /* legacy stub, not used */ },
 
   updateUI() {
@@ -478,8 +489,11 @@ const EVS_WASM = {
     }
 
     // Reference decoder keeps state — reload module on 2nd call.
-    if (this._usedOnce) {
+        if (this._usedOnce) {
       await this.init();
+      if (this.status !== 'ready' || !this.module) {
+        throw new Error('Re-init failed: ' + this.errorMsg);
+      }
     }
     this._usedOnce = true;
 
