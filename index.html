@@ -507,7 +507,7 @@ const EVS_WASM = {
     FS.writeFile(inPath, evsMimeBytes);
 
     try {
-      if (typeof this.module.callMain === 'function') {
+            if (typeof this.module.callMain === 'function') {
         // Reference CLI: EVS_dec <input> <output>
         this.module.callMain([inPath, outPath]);
       } else {
