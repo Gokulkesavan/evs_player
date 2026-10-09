@@ -1,27 +1,238 @@
-<!-- ========== NEW: EVS → PCM ========== -->
-<div class="container" style="padding-top:0">
-  <div class="divider"></div>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EVS Player — PCAP → EVS → PCM/WAV</title>
+<style>
+:root {
+  --bg: #0a0e14;
+  --panel: #111821;
+  --border: #1f2a37;
+  --text: #d8e0ea;
+  --muted: #7a8899;
+  --accent: #4a9eff;
+  --ok: #2ecc71;
+  --err: #ff5c5c;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  min-height: 100vh;
+}
+header.top { padding: 28px 20px 6px; text-align: center; }
+header.top h1 { margin: 0 0 6px; font-size: 22px; letter-spacing: .3px; }
+header.top p  { margin: 0; color: var(--muted); font-size: 13px; }
+.container { max-width: 980px; margin: 0 auto; padding: 20px; }
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px;
+  margin-top: 14px;
+}
+.divider { height: 1px; background: var(--border); margin: 28px 0; border: 0; }
+h2 {
+  font-size: 16px; margin: 0 0 12px;
+  display: flex; align-items: center; gap: 8px;
+}
+.badge {
+  font-size: 10px; padding: 2px 7px; border-radius: 999px;
+  background: #1b2f4a; color: var(--accent);
+  border: 1px solid #24456b;
+  font-weight: 600; letter-spacing: .4px; text-transform: uppercase;
+}
+.btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: #17202c;
+  color: var(--text);
+  padding: 9px 14px;
+  border-radius: 8px;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+  transition: .15s;
+}
+.btn:hover:not(:disabled) { background: #1e2a3a; border-color: #2a3a4e; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn.ok { background: #14361f; border-color: #1f5a33; color: #b8f0c8; }
+.btn.ok:hover:not(:disabled) { background: #184526; }
+.btn.small { padding: 5px 10px; font-size: 12px; }
+.btnrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.hint { color: var(--muted); font-size: 12.5px; }
+.lbl {
+  display: block; font-size: 11.5px; color: var(--muted);
+  margin-bottom: 5px; text-transform: uppercase; letter-spacing: .5px;
+}
+select, input[type="text"], input[type="number"] {
+  background: #0d141c; border: 1px solid var(--border);
+  color: var(--text); border-radius: 8px;
+  padding: 8px 10px; font: inherit; min-width: 100px;
+}
+select:focus, input:focus { outline: none; border-color: var(--accent); }
+code {
+  font-family: var(--mono); background: #0d141c;
+  border: 1px solid var(--border); padding: 1px 5px;
+  border-radius: 4px; font-size: 12px;
+}
+.inline-fields { display: flex; gap: 18px; flex-wrap: wrap; }
+audio { width: 100%; margin-top: 10px; }
+.log {
+  font-family: var(--mono); font-size: 12px;
+  background: #0a1017; border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px;
+  max-height: 200px; overflow: auto;
+  white-space: pre-wrap; color: #a9b6c5;
+}
+.drop-zone {
+  border: 2px dashed var(--border); border-radius: 10px;
+  padding: 22px; text-align: center;
+  background: #0d141c; transition: .15s;
+}
+.drop-zone.hot { border-color: var(--accent); background: #12202f; }
+footer {
+  text-align: center; color: var(--muted);
+  font-size: 12px; padding: 30px 0 10px;
+}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <h1>EVS Player</h1>
+  <p>PCAP → EVS → PCM/WAV · decoded in the browser via WebAssembly (3GPP TS 26.443)</p>
+</header>
+
+<div class="container">
+
+  <!-- ============================================================
+       1. PCAP → EVS → WAV
+       ============================================================ -->
+  <section id="pcapSection">
+    <h2>PCAP → EVS → WAV <span class="badge">Full Pipeline</span></h2>
+    <div class="card">
+      <div class="hint" style="margin-bottom:12px">
+        Drop a <code>.pcap</code> file containing EVS RTP/UDP traffic.
+        The tool extracts the EVS frames, builds an EVS MIME storage file,
+        then decodes it to raw PCM and WAV using the in‑browser WASM decoder.
+      </div>
+
+      <div id="pcapDropZone" class="drop-zone">
+        <div>Drop a <code>.pcap</code> file here, or
+          <button class="btn small" type="button" id="pcapPickBtn">browse…</button>
+        </div>
+        <input type="file" id="pcapFileInput" accept=".pcap,.cap" hidden>
+        <div id="pcapInfo" class="hint" style="margin-top:10px">(no file selected)</div>
+      </div>
+
+      <div class="inline-fields" style="margin-top:14px">
+        <div>
+          <label class="lbl" for="pcapRate">Sample rate (Hz)</label>
+          <select id="pcapRate">
+            <option value="8000">8000</option>
+            <option value="16000" selected>16000</option>
+            <option value="32000">32000</option>
+            <option value="48000">48000</option>
+          </select>
+        </div>
+        <div>
+          <label class="lbl" for="pcapChannels">Channels</label>
+          <select id="pcapChannels">
+            <option value="1" selected>Mono (1)</option>
+            <option value="2">Stereo (2)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="btnrow" style="margin-top:14px">
+        <button class="btn ok" id="pcapRunBtn" type="button" disabled>Extract &amp; Decode</button>
+        <span id="pcapStatus" class="hint"></span>
+      </div>
+
+      <div id="pcapOutputs" style="margin-top:12px"></div>
+      <div id="pcapLog" class="log" style="margin-top:12px; display:none"></div>
+    </div>
+  </section>
+
+  <hr class="divider">
+
+  <!-- ============================================================
+       2. Raw PCM → WAV
+       ============================================================ -->
+  <section id="pcmToolSection">
+    <h2>Raw PCM → WAV <span class="badge">Utility</span></h2>
+    <div class="card">
+      <div class="hint" style="margin-bottom:12px">
+        Wrap a raw PCM file in a WAV container so it can be played in the browser.
+      </div>
+
+      <div id="pcmDropZone" class="drop-zone">
+        <div>Drop a <code>.pcm</code> file here, or
+          <button class="btn small" type="button" id="pcmPickBtn">browse…</button>
+        </div>
+        <input type="file" id="pcmFileInput" accept=".pcm,.raw,.s16" hidden>
+        <div id="pcmInfo" class="hint" style="margin-top:10px">(no file selected)</div>
+      </div>
+
+      <div class="inline-fields" style="margin-top:14px">
+        <div>
+          <label class="lbl" for="pcmRate">Sample rate (Hz)</label>
+          <input type="number" id="pcmRate" value="16000" min="8000" max="48000" step="1">
+        </div>
+        <div>
+          <label class="lbl" for="pcmChannels">Channels</label>
+          <select id="pcmChannels">
+            <option value="1" selected>1 (Mono)</option>
+            <option value="2">2 (Stereo)</option>
+          </select>
+        </div>
+        <div>
+          <label class="lbl" for="pcmFormat">Sample format</label>
+          <select id="pcmFormat">
+            <option value="s16le" selected>S16LE</option>
+            <option value="s16be">S16BE</option>
+            <option value="f32le">F32LE</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="btnrow" style="margin-top:14px">
+        <button class="btn ok" id="pcmConvertBtn" type="button" disabled>Convert to WAV</button>
+        <span id="pcmStatus" class="hint"></span>
+      </div>
+
+      <div id="pcmPlayerContainer" style="margin-top:12px"></div>
+    </div>
+  </section>
+
+  <hr class="divider">
+
+  <!-- ============================================================
+       3. EVS → Raw PCM  (NEW)
+       ============================================================ -->
   <section id="evsToPcmSection">
     <h2>EVS → Raw PCM (S16LE) <span class="badge">Direct Converter</span></h2>
     <div class="card">
-      <div class="hint" style="margin-bottom:10px">
-        Upload an EVS MIME storage file (<code>#!EVS_MC1.0</code> …) to decode it to raw
-        <strong>S16LE</strong> PCM using the in‑browser WASM decoder.
+      <div class="hint" style="margin-bottom:12px">
+        Upload an EVS MIME storage file (<code>#!EVS_MC1.0</code> …) to decode it
+        to raw <strong>S16LE</strong> PCM using the in‑browser WASM decoder.
+        The sample rate must match the original EVS stream.
       </div>
 
-      <!-- Drop zone -->
-      <div id="evsDropZone" style="border:2px dashed var(--border);border-radius:10px;padding:22px;text-align:center;background:#0d141c">
-        <div style="color:var(--muted);font-size:13px">
-          Drop a <code>.evs</code> file here, or
+      <div id="evsDropZone" class="drop-zone">
+        <div>Drop a <code>.evs</code> file here, or
           <button class="btn small" type="button" id="evsPickBtn">browse…</button>
         </div>
-        <input type="file" id="evsFileInput" accept=".evs" hidden>
-        <div id="evsInfo" style="margin-top:10px;font-family:var(--mono);font-size:12px;color:var(--muted)">
-          (expects EVS MIME storage format)
-        </div>
+        <input type="file" id="evsFileInput" accept=".evs,.bit,.mime" hidden>
+        <div id="evsInfo" class="hint" style="margin-top:10px">(no file selected)</div>
       </div>
 
-      <!-- Output sample rate (must match the original EVS stream) -->
       <div class="inline-fields" style="margin-top:14px">
         <div>
           <label class="lbl" for="evsRate">Output sample rate (Hz)</label>
@@ -32,17 +243,649 @@
             <option value="48000">48000</option>
           </select>
         </div>
+        <div>
+          <label class="lbl" for="evsChannels">Channels</label>
+          <select id="evsChannels">
+            <option value="1" selected>1 (Mono)</option>
+            <option value="2">2 (Stereo)</option>
+          </select>
+        </div>
       </div>
 
-      <!-- Action buttons -->
       <div class="btnrow" style="margin-top:14px">
         <button class="btn ok" id="evsConvertBtn" type="button" disabled>Convert to PCM</button>
         <span id="evsStatus" class="hint"></span>
       </div>
 
-      <!-- Player / download container -->
       <div id="evsPlayerContainer" style="margin-top:12px"></div>
     </div>
   </section>
+
+  <footer>
+    Decoder: 3GPP TS 26.443 reference C code, compiled to WebAssembly.<br>
+    Place <code>EVS_dec.js</code> and <code>EVS_dec.wasm</code> next to this file.
+  </footer>
 </div>
-<!-- ========== END NEW ========== -->
+
+<script>
+(function () {
+  'use strict';
+
+  /* ============================================================
+     Generic helpers
+     ============================================================ */
+  const $ = (sel, root = document) => root.querySelector(sel);
+
+  function fmtBytes(n) {
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KiB';
+    return (n / 1024 / 1024).toFixed(2) + ' MiB';
+  }
+
+  function download(data, filename, mime = 'application/octet-stream') {
+    const blob = data instanceof Blob ? data : new Blob([data], { type: mime });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 500);
+  }
+
+  function writeString(dv, off, str) {
+    for (let i = 0; i < str.length; i++) dv.setUint8(off + i, str.charCodeAt(i));
+  }
+
+  /** Wrap raw PCM in a minimal WAV container. */
+  function createWavFromPcm(pcmBytes, sampleRate, channels, format) {
+    const isFloat = format === 'f32le' || format === 'f32be';
+    const bytesPerSample = isFloat ? 4 : 2;
+    const blockAlign = channels * bytesPerSample;
+    const byteRate   = sampleRate * blockAlign;
+    const dataSize   = pcmBytes.length;
+
+    const buf = new ArrayBuffer(44 + dataSize);
+    const dv  = new DataView(buf);
+
+    writeString(dv, 0, 'RIFF');
+    dv.setUint32(4, 36 + dataSize, true);
+    writeString(dv, 8, 'WAVE');
+    writeString(dv, 12, 'fmt ');
+    dv.setUint32(16, 16, true);
+    dv.setUint16(20, isFloat ? 3 : 1, true);       // 1 = PCM, 3 = IEEE float
+    dv.setUint16(22, channels, true);
+    dv.setUint32(24, sampleRate, true);
+    dv.setUint32(28, byteRate, true);
+    dv.setUint16(32, blockAlign, true);
+    dv.setUint16(34, bytesPerSample * 8, true);
+    writeString(dv, 36, 'data');
+    dv.setUint32(40, dataSize, true);
+
+    const dst = new Uint8Array(buf, 44);
+    dst.set(pcmBytes);
+
+    // WAV is little‑endian; byte‑swap BE inputs.
+    if (format === 's16be') {
+      for (let i = 0; i + 1 < dataSize; i += 2) {
+        const t = dst[i]; dst[i] = dst[i + 1]; dst[i + 1] = t;
+      }
+    } else if (format === 'f32be') {
+      for (let i = 0; i + 3 < dataSize; i += 4) {
+        const a = dst[i], b = dst[i + 1];
+        dst[i]     = dst[i + 3];
+        dst[i + 1] = dst[i + 2];
+        dst[i + 2] = b;
+        dst[i + 3] = a;
+      }
+    }
+
+    return new Blob([buf], { type: 'audio/wav' });
+  }
+
+  /* ============================================================
+     WASM decoder wrapper (EVS_dec.js / EVS_dec.wasm)
+     ============================================================ */
+  const EVS_WASM = {
+    status: 'idle',            // idle | loading | ready | error
+    module: null,
+    errorMsg: '',
+    _promise: null,
+
+    async init() {
+      if (this.status === 'ready') return this.module;
+      if (this._promise) return this._promise;
+
+      this._promise = (async () => {
+        this.status = 'loading';
+        try {
+          const factory = await this._loadFactory();
+          this.module = await factory({
+            noInitialRun: true,
+            print:    (t) => console.log('[evs]', t),
+            printErr: (t) => console.warn('[evs]', t),
+            locateFile: (p) => p,        // load .wasm from the page folder
+          });
+          this.status = 'ready';
+          return this.module;
+        } catch (e) {
+          this.status = 'error';
+          this.errorMsg = (e && e.message) ? e.message : String(e);
+          this._promise = null;
+          throw e;
+        }
+      })();
+
+      return this._promise;
+    },
+
+    async _loadFactory() {
+      if (typeof window.EVS_dec        === 'function') return window.EVS_dec;
+      if (typeof window.createEVS_dec  === 'function') return window.createEVS_dec;
+
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'EVS_dec.js';
+        s.onload = resolve;
+        s.onerror = () => reject(new Error('Could not load EVS_dec.js'));
+        document.head.appendChild(s);
+      });
+
+      if (typeof window.EVS_dec       === 'function') return window.EVS_dec;
+      if (typeof window.createEVS_dec === 'function') return window.createEVS_dec;
+
+      for (const k of Object.keys(window)) {
+        if (typeof window[k] === 'function' && /^(EVS|evs|create)/.test(k)) {
+          return window[k];
+        }
+      }
+      throw new Error('EVS_dec.js loaded but did not export a module factory');
+    },
+
+    /** Invoke the C `main()`, tolerating Emscripten exit throws. */
+    _callMain(mod, args) {
+      const classify = (e) => {
+        const status =
+          (e && typeof e === 'object' && 'status' in e) ? e.status :
+          (typeof e === 'number') ? e : null;
+        if (status !== null && status !== 0) {
+          throw new Error('Decoder exited with status ' + status);
+        }
+        // status 0 or unknown → caller will verify output file existence
+      };
+
+      if (typeof mod.callMain === 'function') {
+        try { mod.callMain(args); } catch (e) { classify(e); }
+        return;
+      }
+
+      if (typeof mod.ccall === 'function' && typeof mod.allocateUTF8 === 'function') {
+        const argv = args.map(a => mod.allocateUTF8(a));
+        const argvPtr = mod._malloc((argv.length + 1) * 4);
+        argv.forEach((p, i) => mod.setValue(argvPtr + i * 4, p, 'i32'));
+        mod.setValue(argvPtr + argv.length * 4, 0, 'i32');
+        try { mod.ccall('main', 'number', ['number', 'number'], [argv.length, argvPtr]); }
+        catch (e) { classify(e); }
+        return;
+      }
+
+      if (typeof mod._main === 'function') {
+        const encode = (str) => {
+          if (typeof mod.allocateUTF8 === 'function') return mod.allocateUTF8(str);
+          if (typeof mod.stringToUTF8 === 'function' && typeof mod._malloc === 'function') {
+            const len = (typeof mod.lengthBytesUTF8 === 'function'
+              ? mod.lengthBytesUTF8(str) : str.length) + 1;
+            const p = mod._malloc(len);
+            mod.stringToUTF8(str, p, len);
+            return p;
+          }
+          throw new Error('Cannot encode string into WASM memory');
+        };
+        const ptrs = args.map(encode);
+        const argvPtr = mod._malloc((ptrs.length + 1) * 4);
+        ptrs.forEach((p, i) => mod.setValue(argvPtr + i * 4, p, 'i32'));
+        mod.setValue(argvPtr + ptrs.length * 4, 0, 'i32');
+        try { mod._main(ptrs.length, argvPtr); }
+        catch (e) { classify(e); }
+        finally {
+          ptrs.forEach(p => { try { mod._free(p); } catch (_) {} });
+          try { mod._free(argvPtr); } catch (_) {}
+        }
+        return;
+      }
+
+      throw new Error('WASM module exposes neither callMain, ccall nor _main');
+    },
+
+    /**
+     * Decode a complete EVS MIME storage file (as a Uint8Array) to S16LE PCM.
+     * Returns a Uint8Array containing the raw PCM.
+     */
+    async decodeMimeToPcm(evsBytes) {
+      const mod = await this.init();
+      const FS  = mod.FS;
+      if (!FS) throw new Error('Emscripten FS is not available on the module');
+
+      for (const p of ['/input.evs', '/output.pcm']) {
+        try { FS.unlink(p); } catch (_) {}
+      }
+
+      FS.writeFile('/input.evs', evsBytes);
+
+      try {
+        this._callMain(mod, ['-mime', '/input.evs', '/output.pcm']);
+      } catch (e) {
+        // If the decoder crashed but still produced output, keep going.
+        if (!FS.analyzePath('/output.pcm').exists) throw e;
+        console.warn('[evs] decoder threw but output exists; continuing', e);
+      }
+
+      if (!FS.analyzePath('/output.pcm').exists) {
+        throw new Error('Decoder did not produce /output.pcm');
+      }
+      return FS.readFile('/output.pcm');
+    },
+  };
+
+  /* ============================================================
+     PCAP parsing
+     ============================================================ */
+  function parsePcap(buf) {
+    if (buf.byteLength < 24) throw new Error('PCAP file too short');
+    const dv = new DataView(buf);
+    const magic = dv.getUint32(0, false);
+
+    let little = true, nano = false;
+    if      (magic === 0xa1b2c3d4) little = false;
+    else if (magic === 0xd4c3b2a1) little = true;
+    else if (magic === 0xa1b23c4d) { little = false; nano = true; }
+    else if (magic === 0x4d3cb2a1) { little = true;  nano = true; }
+    else throw new Error('Not a PCAP file (bad magic)');
+
+    const linkType = dv.getUint32(20, little);
+    const packets  = [];
+    let off = 24;
+
+    while (off + 16 <= buf.byteLength) {
+      const tsSec  = dv.getUint32(off,     little);
+      const tsFrac = dv.getUint32(off + 4, little);
+      const inclLen= dv.getUint32(off + 8, little);
+      off += 16;
+      if (off + inclLen > buf.byteLength) break;
+      packets.push({
+        ts: tsSec + (nano ? tsFrac / 1e9 : tsFrac / 1e6),
+        data: new Uint8Array(buf, off, inclLen),
+      });
+      off += inclLen;
+    }
+    return { linkType, packets };
+  }
+
+  function extractRtpPayload(pkt, linkType) {
+    let ipOff;
+    if (linkType === 1) {                 // Ethernet
+      if (pkt.length < 14) return null;
+      const etherType = (pkt[12] << 8) | pkt[13];
+      if (etherType !== 0x0800) return null;
+      ipOff = 14;
+    } else if (linkType === 113) {        // Linux cooked (SLL)
+      if (pkt.length < 16) return null;
+      ipOff = 16;
+    } else if (linkType === 0) {          // NULL / loopback
+      if (pkt.length < 4) return null;
+      ipOff = 4;
+    } else {
+      return null;
+    }
+
+    if (pkt.length < ipOff + 20) return null;
+    const vihl = pkt[ipOff];
+    if ((vihl >> 4) !== 4) return null;           // must be IPv4
+    const ihl   = (vihl & 0x0f) * 4;
+    const proto = pkt[ipOff + 9];
+    if (proto !== 17) return null;                // must be UDP
+
+    const udpOff = ipOff + ihl;
+    if (pkt.length < udpOff + 8) return null;
+    const srcPort = (pkt[udpOff]     << 8) | pkt[udpOff + 1];
+    const dstPort = (pkt[udpOff + 2] << 8) | pkt[udpOff + 3];
+    const udpLen  = (pkt[udpOff + 4] << 8) | pkt[udpOff + 5];
+
+    const rtpOff = udpOff + 8;
+    if (pkt.length < rtpOff + 12) return null;
+
+    const b0  = pkt[rtpOff];
+    if ((b0 >> 6) !== 2) return null;             // RTP version must be 2
+    const cc  = b0 & 0x0f;
+    const ext = (b0 >> 4) & 1;
+    const pad = (b0 >> 5) & 1;
+    const pt  = pkt[rtpOff + 1] & 0x7f;
+
+    let hdr = 12 + cc * 4;
+    if (ext) {
+      if (pkt.length < rtpOff + hdr + 4) return null;
+      const extLen = (pkt[rtpOff + hdr + 2] << 8) | pkt[rtpOff + hdr + 3];
+      hdr += 4 + extLen * 4;
+    }
+
+    let end = rtpOff + (udpLen - 8);
+    if (end > pkt.length) end = pkt.length;
+    if (pad && end > rtpOff + hdr) end -= pkt[end - 1];
+    if (end <= rtpOff + hdr) return null;
+
+    return {
+      srcPort, dstPort, pt,
+      payload: new Uint8Array(pkt.subarray(rtpOff + hdr, end)),
+    };
+  }
+
+  /* ============================================================
+     EVS MIME storage file builder
+     ------------------------------------------------------------
+     Format (TS 26.443 Annex C):
+        magic  "#!EVS_MC1.0\n"        (12 bytes)
+        header (12 bytes)             – see below
+        frame  … repeated             – each frame = RTP payload as-is
+     The exact header layout is not fully spelled out in public docs;
+     the layout below works with the 3GPP reference decoder for the
+     common mono / 16 kHz case.  Tweak the header bytes here if your
+     stream configuration differs.
+     ============================================================ */
+  function buildEvsMimeFile(frames, opts) {
+    const magic = new TextEncoder().encode('#!EVS_MC1.0\n');   // 12 bytes
+    const header = new Uint8Array(12);
+    header[2] = opts.channels || 1;                             // channel count
+    const sfIdx = ({ 8000: 0, 16000: 1, 32000: 2, 48000: 3 })[opts.sampleRateHz];
+    header[4] = (sfIdx === undefined ? 1 : sfIdx);              // sample rate index
+
+    let total = magic.length + header.length;
+    for (const f of frames) total += f.length;
+
+    const out = new Uint8Array(total);
+    let o = 0;
+    out.set(magic, o);  o += magic.length;
+    out.set(header, o); o += header.length;
+    for (const f of frames) { out.set(f, o); o += f.length; }
+    return out;
+  }
+
+  /* ============================================================
+     Drop‑zone helper
+     ============================================================ */
+  function setupDropZone(zone, onFile) {
+    ['dragenter', 'dragover'].forEach(ev =>
+      zone.addEventListener(ev, (e) => {
+        e.preventDefault();
+        zone.classList.add('hot');
+      })
+    );
+    ['dragleave', 'drop'].forEach(ev =>
+      zone.addEventListener(ev, (e) => {
+        e.preventDefault();
+        zone.classList.remove('hot');
+      })
+    );
+    zone.addEventListener('drop', (e) => {
+      const f = e.dataTransfer.files[0];
+      if (f) onFile(f);
+    });
+  }
+
+  /* ============================================================
+     UI · PCAP → EVS → WAV
+     ============================================================ */
+  const pcapDropZone = $('#pcapDropZone');
+  const pcapFileInput= $('#pcapFileInput');
+  const pcapPickBtn  = $('#pcapPickBtn');
+  const pcapRunBtn   = $('#pcapRunBtn');
+  const pcapStatus   = $('#pcapStatus');
+  const pcapInfo     = $('#pcapInfo');
+  const pcapOutputs  = $('#pcapOutputs');
+  const pcapLog      = $('#pcapLog');
+  let   pcapFile     = null;
+
+  function logPcap(msg) {
+    pcapLog.style.display = 'block';
+    pcapLog.textContent += msg + '\n';
+    pcapLog.scrollTop = pcapLog.scrollHeight;
+  }
+
+  function addOutputLink(label, blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a   = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.textContent = label;
+    a.className = 'btn small';
+    a.style.marginRight = '8px';
+    a.style.marginBottom = '6px';
+    pcapOutputs.appendChild(a);
+  }
+
+  pcapPickBtn.addEventListener('click', () => pcapFileInput.click());
+  pcapFileInput.addEventListener('change', (e) => {
+    const f = e.target.files[0];
+    if (f) selectPcap(f);
+  });
+  setupDropZone(pcapDropZone, (f) => {
+    if (!/\.(pcap|cap)$/i.test(f.name)) {
+      pcapStatus.textContent = 'Please drop a .pcap file.';
+      return;
+    }
+    selectPcap(f);
+  });
+
+  function selectPcap(f) {
+    pcapFile = f;
+    pcapInfo.textContent = `${f.name} — ${fmtBytes(f.size)}`;
+    pcapRunBtn.disabled = false;
+    pcapStatus.textContent = '';
+    pcapOutputs.innerHTML = '';
+    pcapLog.textContent = '';
+    pcapLog.style.display = 'none';
+  }
+
+  pcapRunBtn.addEventListener('click', async () => {
+    if (!pcapFile) return;
+    pcapRunBtn.disabled = true;
+    pcapStatus.textContent = 'Reading PCAP…';
+    pcapOutputs.innerHTML = '';
+    pcapLog.textContent = '';
+    pcapLog.style.display = 'none';
+
+    try {
+      const buf = await pcapFile.arrayBuffer();
+      const { linkType, packets } = parsePcap(buf);
+      logPcap(`PCAP: ${packets.length} packets, linkType=${linkType}`);
+
+      // Group RTP payloads by stream
+      const byStream = new Map();
+      for (const p of packets) {
+        const r = extractRtpPayload(p.data, linkType);
+        if (!r) continue;
+        const key = `${r.srcPort}->${r.dstPort}/pt${r.pt}`;
+        if (!byStream.has(key)) byStream.set(key, []);
+        byStream.get(key).push(r.payload);
+      }
+      if (byStream.size === 0) throw new Error('No RTP/UDP packets found in PCAP');
+
+      // Pick the largest stream
+      let bestKey = null, bestCount = 0;
+      for (const [k, arr] of byStream) {
+        if (arr.length > bestCount) { bestCount = arr.length; bestKey = k; }
+      }
+      logPcap(`Selected stream: ${bestKey} (${bestCount} RTP payloads)`);
+
+      const frames       = byStream.get(bestKey);
+      const sampleRateHz = parseInt($('#pcapRate').value, 10);
+      const channels     = parseInt($('#pcapChannels').value, 10);
+
+      const mime = buildEvsMimeFile(frames, { sampleRateHz, channels });
+      logPcap(`Built EVS MIME file: ${fmtBytes(mime.length)}`);
+
+      const baseName = pcapFile.name.replace(/\.(pcap|cap)$/i, '');
+      addOutputLink(
+        `Download EVS (${fmtBytes(mime.length)})`,
+        new Blob([mime], { type: 'application/octet-stream' }),
+        `${baseName}.evs`
+      );
+
+      pcapStatus.textContent = 'Decoding with WASM…';
+      const pcm = await EVS_WASM.decodeMimeToPcm(mime);
+      logPcap(`Decoded PCM: ${fmtBytes(pcm.length)}`);
+
+      addOutputLink(
+        `Download PCM (${fmtBytes(pcm.length)})`,
+        new Blob([pcm], { type: 'application/octet-stream' }),
+        `${baseName}.pcm`
+      );
+
+      const wavBlob = createWavFromPcm(pcm, sampleRateHz, channels, 's16le');
+      addOutputLink(
+        `Download WAV (${fmtBytes(wavBlob.size)})`,
+        wavBlob,
+        `${baseName}.wav`
+      );
+
+      const url = URL.createObjectURL(wavBlob);
+      const audio = document.createElement('audio');
+      audio.controls = true;
+      audio.src = url;
+      pcapOutputs.appendChild(audio);
+
+      pcapStatus.textContent = 'Done.';
+    } catch (e) {
+      console.error(e);
+      pcapStatus.textContent = 'Error: ' + (e.message || e);
+      logPcap('ERROR: ' + (e.stack || e.message || e));
+    } finally {
+      pcapRunBtn.disabled = false;
+    }
+  });
+
+  /* ============================================================
+     UI · Raw PCM → WAV
+     ============================================================ */
+  const pcmDropZone   = $('#pcmDropZone');
+  const pcmFileInput  = $('#pcmFileInput');
+  const pcmPickBtn    = $('#pcmPickBtn');
+  const pcmConvertBtn = $('#pcmConvertBtn');
+  const pcmStatus     = $('#pcmStatus');
+  const pcmInfo       = $('#pcmInfo');
+  const pcmPlayer     = $('#pcmPlayerContainer');
+  let   pcmFile       = null;
+
+  pcmPickBtn.addEventListener('click', () => pcmFileInput.click());
+  pcmFileInput.addEventListener('change', (e) => {
+    const f = e.target.files[0];
+    if (f) selectPcm(f);
+  });
+  setupDropZone(pcmDropZone, selectPcm);
+
+  function selectPcm(f) {
+    pcmFile = f;
+    pcmInfo.textContent = `${f.name} — ${fmtBytes(f.size)}`;
+    pcmConvertBtn.disabled = false;
+    pcmStatus.textContent = '';
+    pcmPlayer.innerHTML = '';
+  }
+
+  pcmConvertBtn.addEventListener('click', async () => {
+    if (!pcmFile) return;
+    try {
+      const buf      = await pcmFile.arrayBuffer();
+      const pcm      = new Uint8Array(buf);
+      const rate     = parseInt($('#pcmRate').value, 10) || 16000;
+      const channels = parseInt($('#pcmChannels').value, 10) || 1;
+      const format   = $('#pcmFormat').value;
+
+      const wav = createWavFromPcm(pcm, rate, channels, format);
+      const base = pcmFile.name.replace(/\.[^.]+$/, '');
+      download(wav, `${base}.wav`, 'audio/wav');
+
+      pcmStatus.textContent = `Done — ${fmtBytes(wav.size)} WAV written.`;
+      const url = URL.createObjectURL(wav);
+      pcmPlayer.innerHTML = `<audio controls src="${url}"></audio>`;
+    } catch (e) {
+      pcmStatus.textContent = 'Error: ' + (e.message || e);
+    }
+  });
+
+  /* ============================================================
+     UI · EVS → Raw PCM  (NEW)
+     ============================================================ */
+  const evsDropZone   = $('#evsDropZone');
+  const evsFileInput  = $('#evsFileInput');
+  const evsPickBtn    = $('#evsPickBtn');
+  const evsConvertBtn = $('#evsConvertBtn');
+  const evsStatus     = $('#evsStatus');
+  const evsInfo       = $('#evsInfo');
+  const evsPlayer     = $('#evsPlayerContainer');
+  let   evsFile       = null;
+
+  evsPickBtn.addEventListener('click', () => evsFileInput.click());
+  evsFileInput.addEventListener('change', (e) => {
+    const f = e.target.files[0];
+    if (f) selectEvs(f);
+  });
+  setupDropZone(evsDropZone, (f) => {
+    if (!/\.(evs|bit|mime)$/i.test(f.name)) {
+      evsStatus.textContent = 'Please drop a .evs file.';
+      return;
+    }
+    selectEvs(f);
+  });
+
+  function selectEvs(f) {
+    evsFile = f;
+    evsInfo.textContent = `${f.name} — ${fmtBytes(f.size)}`;
+    evsConvertBtn.disabled = false;
+    evsStatus.textContent = '';
+    evsPlayer.innerHTML = '';
+  }
+
+  evsConvertBtn.addEventListener('click', async () => {
+    if (!evsFile) return;
+    evsConvertBtn.disabled = true;
+    evsStatus.textContent  = 'Reading file…';
+    evsPlayer.innerHTML    = '';
+
+    try {
+      const buf      = await evsFile.arrayBuffer();
+      const evsBytes = new Uint8Array(buf);
+
+      evsStatus.textContent = 'Initialising WASM decoder…';
+      await EVS_WASM.init();
+
+      const rate     = parseInt($('#evsRate').value, 10)     || 16000;
+      const channels = parseInt($('#evsChannels').value, 10) || 1;
+
+      evsStatus.textContent = 'Decoding…';
+      const pcm = await EVS_WASM.decodeMimeToPcm(evsBytes);
+
+      const base = evsFile.name.replace(/\.[^.]+$/, '');
+      download(
+        new Blob([pcm], { type: 'application/octet-stream' }),
+        `${base}.pcm`,
+        'application/octet-stream'
+      );
+
+      evsStatus.textContent = `Done — ${fmtBytes(pcm.length)} PCM written.`;
+
+      // Inline playback via a temporary WAV wrapper.
+      const wav = createWavFromPcm(pcm, rate, channels, 's16le');
+      const url = URL.createObjectURL(wav);
+      evsPlayer.innerHTML = `<audio controls src="${url}"></audio>`;
+    } catch (e) {
+      console.error('[evs→pcm]', e);
+      evsStatus.textContent = 'Error: ' + (e.message || e);
+    } finally {
+      evsConvertBtn.disabled = false;
+    }
+  });
+
+})();
+</script>
+
+</body>
+</html>
