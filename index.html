@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>EVS: pcap → .evs → .pcm → .wav</title>
+<title>EVS pcap → WAV</title>
 <script>
   /* Emscripten Module config. The glue (EVS_dec.js) is re-executed inside
      new Function() for every decode because the reference decoder keeps global
@@ -129,20 +129,17 @@ table.frametable td{padding:3px 8px;border-bottom:1px solid #1c2530}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;align-items:end}
 .check{display:flex;align-items:center;gap:8px;font-size:12.5px;padding-bottom:6px}
-.pipe{margin-top:12px;display:flex;flex-direction:column;gap:10px}
-.step{display:grid;grid-template-columns:28px 1fr;gap:12px;background:#0d141c;border:1px solid var(--border);border-radius:8px;padding:10px 12px}
-.stepno{width:24px;height:24px;border-radius:50%;background:var(--panel2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--accent)}
-.steptitle{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-weight:600;font-size:13px;margin-bottom:6px}
-.step .errbox,.step .warnbox,.step .okbox{margin:8px 0}
-.step pre{max-height:240px}
-.step audio{max-width:100%}
+.pipe{margin-top:12px;display:flex;flex-direction:column;gap:8px}
+.pipe .errbox,.pipe .warnbox{margin:0}
+.mixchk{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;margin-right:6px}
+.mixbar{border-color:#1f6feb55}
 .mini{font-size:12px;color:var(--muted)}
 </style>
 </head>
 <body>
 
 <header>
-  <h1><span class="dot"></span>EVS: pcap → .evs → .pcm → .wav</h1>
+  <h1><span class="dot"></span>EVS pcap → WAV</h1>
   <span class="fn" id="fileName"></span>
   <span class="spacer"></span>
   <button class="btn primary" id="openBtn" type="button">Open .pcap / .pcapng…</button>
@@ -165,10 +162,7 @@ table.frametable td{padding:3px 8px;border-bottom:1px solid #1c2530}
 
     <div class="card">
       <div class="fields">
-        <div>
-          <label class="lbl" for="extraArgs">Extra decoder flags (optional)</label>
-          <input type="text" id="extraArgs" placeholder="passed before the sample rate" autocomplete="off" spellcheck="false">
-        </div>
+        <label class="check"><input type="checkbox" id="noDelay"> Disable decoder delay compensation (-no_delay_cmp)</label>
         <label class="check"><input type="checkbox" id="verbose"> Verbose decoder log (drops -q)</label>
       </div>
     </div>
@@ -179,7 +173,7 @@ table.frametable td{padding:3px 8px;border-bottom:1px solid #1c2530}
     <p>Drop a <code>.pcap</code> or <code>.pcapng</code> capture anywhere on this page</p>
     <p><button class="btn primary" id="pickBtn" type="button">Browse for a capture</button></p>
     <p class="hint" style="margin-top:22px;max-width:640px;margin-left:auto;margin-right:auto;text-align:left">
-      Pipeline: pcap → .evs → .pcm → .wav. Parses RTP EVS payloads per RFC 8130 / TS 26.445 Annex A (Compact &amp;
+      Converts to WAV and lets you mix streams. Parses RTP EVS payloads per RFC 8130 / TS 26.445 Annex A (Compact &amp;
       Header-Full), reassembles the per-stream timeline, fills sequence gaps
       with SPEECH_LOST frames, and writes a storage file
       (<code>#!EVS_MC1.0\n</code> + 4-byte channel count + ToC/speech
@@ -204,7 +198,6 @@ table.frametable td{padding:3px 8px;border-bottom:1px solid #1c2530}
         </div>
         <input type="file" id="pcmFileInput" accept=".pcm,.raw,.s16le,.sw,.bin" hidden>
         <div id="pcmInfo" style="margin-top:10px;font-family:var(--mono);font-size:12px;color:var(--muted)">
-          (16-bit signed little-endian assumed)
         </div>
       </div>
       <div class="inline-fields" style="margin-top:14px">
@@ -438,7 +431,7 @@ const EVS_WASM = {
     this.errorMsg = '';
     this._usedOnce = false;
     this.updateUI();
-    let onReady, onError;
+    let onReady, onError, cleanupTimer;
     try {
       window.__evsModuleError = null;
       window.__evsModuleReady = false;
@@ -447,14 +440,17 @@ const EVS_WASM = {
       });
       this.module = modCfg;
 
+      let timer;
       const readyPromise = new Promise((resolve, reject) => {
-        const timer = setTimeout(
+        timer = setTimeout(
           () => reject(new Error(window.__evsModuleError || 'WASM init timeout (20 s)')), 20000);
         onReady = () => { clearTimeout(timer); resolve(); };
         onError = (e) => { clearTimeout(timer); reject(new Error((e.detail && e.detail.message) || 'wasm aborted')); };
         window.addEventListener('evs-module-ready', onReady, { once: true });
         window.addEventListener('evs-module-error', onError, { once: true });
       });
+      readyPromise.catch(() => {});   // handled below via await; avoids a stray unhandled rejection if fetch fails first
+      cleanupTimer = () => clearTimeout(timer);
 
       const res = await fetch(scriptUrl, { cache: 'no-store' });
       if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${scriptUrl}`);
@@ -477,6 +473,7 @@ const EVS_WASM = {
       this.status = 'error';
       this.errorMsg = e.message || String(e);
     } finally {
+      if (cleanupTimer) cleanupTimer();
       if (onReady) window.removeEventListener('evs-module-ready', onReady);
       if (onError) window.removeEventListener('evs-module-error', onError);
     }
@@ -526,7 +523,7 @@ const EVS_WASM = {
     // Reference CLI: EVS_dec [options] Fs bitstream_file output_file
     const args = ['-mime'];
     if (!opts.verbose) args.push('-q');
-    if (opts.extra) args.push(...opts.extra.split(/\s+/).filter(Boolean));
+    if (opts.noDelayCmp) args.push('-no_delay_cmp');
     args.push(String(Math.round(fsHz / 1000)), inPath, outPath);
     this.log.unshift('$ EVS_dec ' + args.join(' '));
 
@@ -1490,7 +1487,7 @@ function renderApp() {
     html += `<div class="warnbox">No RTP streams detected in this capture file.</div>`;
   } else {
     html += `<section><h2>RTP / EVS Audio Streams <span class="badge">${totalRtp}</span></h2>`;
-    if (evsCount > 1) html += `<div class="btnrow" style="margin:0 0 12px"><button class="btn ok" type="button" onclick="runAllStreams()">Decode all ${evsCount} EVS streams</button></div>`;
+    if (evsCount > 1) html += `<div class="card mixbar" id="mixBar"></div>`;
     for (const g of state.streams) {
       const cls = state.classes.get(g.key);
       const ana = state.analyses.get(g.key);
@@ -1536,22 +1533,28 @@ function renderApp() {
 }
 
 /* ============================================================================
- * 12b. Pipeline per EVS stream:  pcap -> .evs -> .pcm -> .wav
+ * 12b. Conversion per EVS stream (pcap -> decoder input -> .pcm -> .wav) and mixing
+ *      The .evs (MIME storage) bytes are built in memory only because the
+ *      reference decoder reads its input from a file. They are not shown unless
+ *      something goes wrong.
  * ============================================================================ */
 const FRAME_SEC = 0.02;
-const pipe = new Map();          // stream key -> pipeline state
+const pipe = new Map();          // stream key -> state
 let decodeQueue = Promise.resolve();
+let mixState = { busy: false, err: null, res: null };
 
 const sidOf = key => key.replace(/[^a-zA-Z0-9]/g, '_');
 const streamName = g => 'stream_0x' + g.ssrc.toString(16);
+const streamLabel = g => `0x${g.ssrc.toString(16)}  ${g.src} → ${g.dst}`;
 
 function clearPipes() {
   for (const p of pipe.values()) if (p.wavUrl) URL.revokeObjectURL(p.wavUrl);
+  if (mixState.res && mixState.res.url) URL.revokeObjectURL(mixState.res.url);
   pipe.clear();
+  mixState = { busy: false, err: null, res: null };
 }
 
-/* Re-parse the generated .evs with the same tables, as a self-check that every
-   record length is consistent with what the decoder will expect. */
+/* Re-parse the generated bytes with the frame tables as a self-check. */
 function validateEvs(b) {
   const r = { frames: 0, speech: 0, sid: 0, lost: 0, nodata: 0, error: null, warnings: [] };
   for (let i = 0; i < EVS_MAGIC.length; i++) {
@@ -1577,60 +1580,132 @@ function validateEvs(b) {
 
 function getPipe(key) {
   let p = pipe.get(key);
-  if (!p) { p = { evs: null, check: null, fs: 16000, fsSource: '', busy: false, err: null, pcm: null, wav: null, wavUrl: null, log: null, stats: null }; pipe.set(key, p); }
+  if (!p) {
+    p = { evs: null, check: null, autoFs: 16000, fsSource: '', fsMode: 'auto', fs: 0,
+          busy: false, job: null, err: null, pcm: null, wav: null, wavUrl: null, log: null, stats: null, mix: false };
+    pipe.set(key, p);
+  }
   return p;
 }
+const effectiveFs = p => p.fsMode === 'auto' ? p.autoFs : p.fsMode;
 
-/* Stage 1: reconstructed frames -> .evs bytes */
-function buildStage1(key) {
+function prepareStream(key) {
   const ana = state.analyses.get(key), cls = state.classes.get(key);
   const p = getPipe(key);
   const res = resolveOutputFs(cls, ana.frames);
-  p.fs = res.fs; p.fsSource = res.source;
+  p.autoFs = res.fs; p.fsSource = res.source;
   p.evs = buildEvsMimeFile(ana.frames, cls.channels);
   p.check = validateEvs(p.evs);
 }
 
-/* Stages 2+3: .evs -> .pcm (WASM) -> .wav */
-function decodeStream(key) {
+function decoderOpts() {
+  return { verbose: $('#verbose').checked, noDelayCmp: $('#noDelay').checked };
+}
+
+/* Queue one decoder run. Resolves with { pcm, log }. */
+function decodeRaw(key, fs) {
   const p = getPipe(key);
-  if (p.busy) return decodeQueue;
-  p.busy = true; p.err = null;
-  renderPipe(key);
-  const job = decodeQueue.then(() => doDecode(key));
+  const job = decodeQueue.then(() => EVS_WASM.decodeMimeToPcm(p.evs, fs, decoderOpts()));
   decodeQueue = job.catch(() => {});
   return job;
 }
 
-async function doDecode(key) {
+function clearResult(p) {
+  if (p.wavUrl) { URL.revokeObjectURL(p.wavUrl); p.wavUrl = null; }
+  p.pcm = null; p.wav = null; p.stats = null; p.log = null; p.err = null;
+}
+
+/* One button: .evs -> .pcm -> .wav */
+function convertStream(key) {
   const p = getPipe(key);
-  try {
-    if (p.wavUrl) { URL.revokeObjectURL(p.wavUrl); p.wavUrl = null; }
-    p.pcm = null; p.wav = null; p.stats = null; p.log = null;
-    const t0 = performance.now();
-    const res = await EVS_WASM.decodeMimeToPcm(p.evs, p.fs, {
-      verbose: $('#verbose').checked, extra: $('#extraArgs').value.trim()
-    });
-    p.log = res.log;
-    if (res.pcm.length < 2) throw new Error('Decoder wrote an empty PCM file. Open the decoder log.');
-    p.pcm = res.pcm;
-    p.wav = pcmToWav(res.pcm, p.fs, 1, 's16le');
-    p.wavUrl = URL.createObjectURL(new Blob([p.wav], { type: 'audio/wav' }));
-    p.stats = pcmStats(res.pcm);
-    p.ms = Math.round(performance.now() - t0);
-  } catch (e) {
-    p.err = e.message || String(e);
-    p.log = EVS_WASM.log.slice();
-  } finally {
-    p.busy = false;
-    renderPipe(key);
-  }
+  if (p.busy && p.job) return p.job;
+  p.busy = true;
+  clearResult(p);
+  renderPipe(key);
+  p.job = (async () => {
+    try {
+      const fs = effectiveFs(p);
+      const t0 = performance.now();
+      const res = await decodeRaw(key, fs);
+      p.log = res.log;
+      if (res.pcm.length < 2) throw new Error('Decoder wrote an empty PCM file. Open the decoder log.');
+      p.fs = fs;
+      p.pcm = res.pcm;
+      p.wav = pcmToWav(res.pcm, fs, 1, 's16le');
+      p.wavUrl = URL.createObjectURL(new Blob([p.wav], { type: 'audio/wav' }));
+      p.stats = pcmStats(res.pcm);
+      p.ms = Math.round(performance.now() - t0);
+    } catch (e) {
+      p.err = e.message || String(e);
+      p.log = EVS_WASM.log.slice();
+    } finally {
+      p.busy = false;
+      renderPipe(key);
+    }
+  })();
+  return p.job;
 }
 
 function runAllStreams() {
-  for (const [key, cls] of state.classes) if (cls.isEVS && state.analyses.has(key)) decodeStream(key);
+  for (const [key, cls] of state.classes) if (cls.isEVS && state.analyses.has(key)) convertStream(key);
 }
 
+/* ---------------------------------------------------------------- mixing */
+function pcmToInt16Bytes(int16) {
+  const out = new Uint8Array(int16.length * 2);
+  const dv = new DataView(out.buffer);
+  for (let i = 0; i < int16.length; i++) dv.setInt16(i * 2, int16[i], true);
+  return out;
+}
+
+async function mixSelected() {
+  const keys = [...pipe.entries()].filter(([, p]) => p.mix).map(([k]) => k);
+  if (keys.length < 2 || mixState.busy) return;
+  if (mixState.res && mixState.res.url) URL.revokeObjectURL(mixState.res.url);
+  mixState = { busy: true, err: null, res: null };
+  updateMixBar();
+  try {
+    // One common rate for everything: the highest rate among the selected streams.
+    const outFs = Math.max(...keys.map(k => effectiveFs(pipe.get(k))));
+    const items = [];
+    for (const k of keys) {
+      const g = state.streams.find(s => s.key === k), p = pipe.get(k);
+      let pcm;
+      if (p.pcm && p.fs === outFs) pcm = p.pcm;            // already converted at that rate
+      else pcm = (await decodeRaw(k, outFs)).pcm;          // decoder does the rate conversion
+      items.push({ g, samples: toInt16(pcm, 's16le'), t0: g.packets[0].ts });
+    }
+    // Align on capture time of each stream's first packet (both directions are seen at one capture point).
+    const tMin = Math.min(...items.map(i => i.t0));
+    let total = 0;
+    for (const it of items) {
+      it.off = Math.round((it.t0 - tMin) * outFs);
+      total = Math.max(total, it.off + it.samples.length);
+    }
+    const mix = new Float32Array(total);
+    for (const it of items) for (let i = 0; i < it.samples.length; i++) mix[it.off + i] += it.samples[i];
+    let peak = 0;
+    for (let i = 0; i < total; i++) { const a = Math.abs(mix[i]); if (a > peak) peak = a; }
+    const gain = peak > 32767 ? 32767 / peak : 1;
+    const out = new Int16Array(total);
+    for (let i = 0; i < total; i++) out[i] = Math.round(mix[i] * gain);
+    const pcmBytes = pcmToInt16Bytes(out);
+    const wav = pcmToWav(pcmBytes, outFs, 1, 's16le');
+    mixState.res = {
+      wav, url: URL.createObjectURL(new Blob([wav], { type: 'audio/wav' })), fs: outFs,
+      dur: total / outFs, stats: pcmStats(pcmBytes), gain,
+      name: 'mix_' + items.map(i => i.g.ssrc.toString(16)).join('_') + '.wav',
+      items: items.map(i => ({ label: streamLabel(i.g), offset: i.off / outFs }))
+    };
+  } catch (e) {
+    mixState.err = e.message || String(e);
+  } finally {
+    mixState.busy = false;
+    updateMixBar();
+  }
+}
+
+/* -------------------------------------------------------------------- UI */
 function frow(k, v) {
   return h('div', { class: 'frow' }, h('span', { class: 'k', text: k }), h('span', { class: 'v', text: v }));
 }
@@ -1641,74 +1716,97 @@ function logBox(lines) {
     : lines.join('\n');
   return h('details', { class: 'help' }, h('summary', { text: 'Decoder log (' + lines.length + ' lines)' }), h('pre', { text }));
 }
-function step(n, title, tag, ...body) {
-  return h('div', { class: 'step' },
-    h('div', { class: 'stepno', text: String(n) }),
-    h('div', null, h('div', { class: 'steptitle' }, title, tag), body));
-}
 
 function renderPipe(key) {
   const el = document.getElementById('pipe-' + sidOf(key));
   const g = state.streams.find(s => s.key === key), ana = state.analyses.get(key), p = pipe.get(key);
   if (!el || !g || !ana || !p) return;
   const name = streamName(g);
+  const kids = [];
 
-  /* Step 1: pcap -> .evs */
-  const s1 = [];
-  s1.push(frow('.evs size', fmtBytes(p.evs.length)));
-  s1.push(frow('Records written', `${p.check.frames} (${p.check.speech} speech, ${p.check.sid} SID, ${p.check.lost} lost, ${p.check.nodata} no-data)`));
-  if (p.check.error) s1.push(h('div', { class: 'errbox', text: 'Self-check of the generated .evs failed: ' + p.check.error + ' The decoder will stop or produce garbage at that point.' }));
-  else if (p.check.frames !== ana.total) s1.push(h('div', { class: 'warnbox', text: `Self-check parsed ${p.check.frames} records but ${ana.total} frames were written.` }));
-  p.check.warnings.forEach(w => s1.push(h('div', { class: 'warnbox', text: w })));
-  s1.push(h('div', { class: 'btnrow' },
-    h('button', { class: 'btn small primary', type: 'button', text: 'Download .evs', onclick: () => download(p.evs, name + '.evs', 'audio/evs') })));
+  // Issues found before converting
+  const problems = p.check.error || p.check.frames !== ana.total || p.check.warnings.length;
+  if (p.check.error) kids.push(h('div', { class: 'errbox', text: 'The decoder input built from this stream failed its self-check: ' + p.check.error + ' The decoder may trap or hang at that point.' }));
+  else if (p.check.frames !== ana.total) kids.push(h('div', { class: 'warnbox', text: `Self-check parsed ${p.check.frames} records but ${ana.total} frames were built.` }));
+  p.check.warnings.forEach(w => kids.push(h('div', { class: 'warnbox', text: w })));
 
-  /* Step 2: .evs -> .pcm */
-  const fsSel = h('select', { 'aria-label': 'Output sample rate', style: 'width:auto', onchange: e => { p.fs = parseInt(e.target.value, 10); } },
-    [8000, 16000, 32000, 48000].map(v => h('option', { value: String(v), selected: v === p.fs, text: (v / 1000) + ' kHz' })));
-  const s2 = [
-    h('div', { class: 'btnrow', style: 'margin-top:0' }, h('span', { class: 'mini', text: 'Output rate' }), fsSel,
-      h('button', { class: 'btn small ok', type: 'button', disabled: p.busy, text: p.pcm ? 'Decode again' : 'Decode with WASM', onclick: () => decodeStream(key) })),
-    h('div', { class: 'mini', style: 'margin-top:6px', text: 'Suggested: ' + p.fsSource + '. The .evs file does not store the audio bandwidth.' })
-  ];
-  if (p.err) s2.push(h('div', { class: 'errbox', text: 'Decode error: ' + p.err }));
-  if (p.pcm) {
-    s2.push(frow('.pcm size', `${fmtBytes(p.pcm.length)} (s16le, mono, ${p.fs} Hz)`));
-    s2.push(h('div', { class: 'btnrow' },
-      h('button', { class: 'btn small', type: 'button', text: 'Download .pcm', onclick: () => download(p.pcm, name + '.pcm') })));
+  // Controls
+  const rateSel = h('select', { 'aria-label': 'Output sample rate', style: 'width:auto', onchange: e => {
+      const v = e.target.value;
+      p.fsMode = v === 'auto' ? 'auto' : parseInt(v, 10);
+      clearResult(p);
+      renderPipe(key);
+    } },
+    h('option', { value: 'auto', selected: p.fsMode === 'auto', text: `Auto: ${p.autoFs / 1000} kHz (${p.fsSource})` }),
+    [8000, 16000, 32000, 48000].map(v => h('option', { value: String(v), selected: p.fsMode === v, text: `${v / 1000} kHz` })));
+  const status = p.busy ? h('span', { class: 'tag warn', text: 'Converting…' })
+    : p.err ? h('span', { class: 'tag err', text: 'Failed' })
+    : p.wav ? h('span', { class: 'tag ok', text: 'Done' }) : null;
+
+  kids.push(h('div', { class: 'btnrow', style: 'margin-top:0' },
+    h('label', { class: 'mixchk' }, h('input', { type: 'checkbox', checked: p.mix, onchange: e => { p.mix = e.target.checked; updateMixBar(); } }), 'Include in mix'),
+    h('span', { class: 'mini', text: 'Output rate' }), rateSel,
+    h('button', { class: 'btn ok', type: 'button', disabled: p.busy, text: p.wav ? 'Convert again' : 'Convert to WAV', onclick: () => convertStream(key) }),
+    status));
+
+  if (p.err) {
+    kids.push(h('div', { class: 'errbox', text: 'Conversion failed: ' + p.err }));
+    kids.push(h('div', { class: 'btnrow' },
+      h('button', { class: 'btn small', type: 'button', text: 'Download decoder input (.evs) for debugging', onclick: () => download(p.evs, name + '.evs', 'audio/evs') })));
   }
-  s2.push(logBox(p.log));
 
-  /* Step 3: .pcm -> .wav */
-  const s3 = [];
   if (p.wav) {
     const dur = p.stats.samples / p.fs, exp = ana.total * FRAME_SEC;
-    s3.push(frow('Duration', fmtDur(dur)));
-    s3.push(frow('Peak / RMS', `${p.stats.peak} / ${isFinite(p.stats.rmsDb) ? p.stats.rmsDb.toFixed(1) + ' dBFS' : 'silent'}`));
-    if (p.stats.peak === 0) s3.push(h('div', { class: 'warnbox', text: 'Decoded audio is digital silence. Check the frame types, sample rate and decoder log.' }));
-    if (Math.abs(dur - exp) > 0.04) s3.push(h('div', { class: 'warnbox', text: `Decoded length (${dur.toFixed(3)} s) differs from frames × 20 ms (${exp.toFixed(3)} s). A large gap points to a desynced .evs.` }));
-    if (p.stats.peak >= 32767) s3.push(h('div', { class: 'warnbox', text: 'Samples reach full scale, so the audio may be clipped.' }));
-    s3.push(h('audio', { controls: true, src: p.wavUrl }));
-    s3.push(h('div', { class: 'btnrow' },
-      h('button', { class: 'btn small primary', type: 'button', text: 'Download .wav', onclick: () => download(p.wav, name + '.wav', 'audio/wav') })));
-  } else {
-    s3.push(h('div', { class: 'mini', text: 'Created automatically when step 2 finishes.' }));
+    kids.push(frow('Result', `${fmtDur(dur)} · ${p.fs / 1000} kHz · mono · ${fmtBytes(p.pcm.length)} PCM`));
+    kids.push(frow('Peak / RMS', `${p.stats.peak} / ${isFinite(p.stats.rmsDb) ? p.stats.rmsDb.toFixed(1) + ' dBFS' : 'silent'}`));
+    if (p.stats.peak === 0) kids.push(h('div', { class: 'warnbox', text: 'Decoded audio is digital silence. Check the frame types, sample rate and decoder log.' }));
+    if (Math.abs(dur - exp) > 0.04) kids.push(h('div', { class: 'warnbox', text: `Decoded length (${dur.toFixed(3)} s) differs from frames × 20 ms (${exp.toFixed(3)} s). A large gap points to a desynced decoder input.` }));
+    if (p.stats.peak >= 32767) kids.push(h('div', { class: 'warnbox', text: 'Samples reach full scale, so the audio may be clipped.' }));
+    kids.push(h('audio', { controls: true, src: p.wavUrl }));
+    kids.push(h('div', { class: 'btnrow' },
+      h('button', { class: 'btn small primary', type: 'button', text: 'Download .wav', onclick: () => download(p.wav, name + '.wav', 'audio/wav') }),
+      h('button', { class: 'btn small', type: 'button', text: 'Download .pcm (s16le, mono, ' + p.fs + ' Hz)', onclick: () => download(p.pcm, name + '.pcm') })));
   }
+  kids.push(logBox(p.log));
+  el.replaceChildren(...kids.filter(Boolean));
+  updateMixBar();
+}
 
-  const tag2 = p.busy ? h('span', { class: 'tag warn', text: 'Decoding…' }) : p.err ? h('span', { class: 'tag err', text: 'Failed' }) : p.pcm ? h('span', { class: 'tag ok', text: 'Done' }) : h('span', { class: 'tag', text: 'Not run' });
-  el.replaceChildren(
-    step(1, 'pcap → .evs', h('span', { class: p.check.error ? 'tag err' : 'tag ok', text: p.check.error ? 'Check failed' : 'Ready' }), s1),
-    step(2, '.evs → .pcm', tag2, s2),
-    step(3, '.pcm → .wav', p.wav ? h('span', { class: 'tag ok', text: 'Done' }) : h('span', { class: 'tag', text: 'Waiting' }), s3)
-  );
+function updateMixBar() {
+  const el = document.getElementById('mixBar');
+  if (!el) return;
+  const all = [...pipe.values()];
+  const sel = all.filter(p => p.mix).length;
+  const busy = all.some(p => p.busy) || mixState.busy;
+  const kids = [
+    h('div', { class: 'btnrow', style: 'margin:0' },
+      h('button', { class: 'btn ok', type: 'button', disabled: busy, text: 'Convert all to WAV', onclick: runAllStreams }),
+      h('button', { class: 'btn primary', type: 'button', disabled: sel < 2 || busy, text: `Mix selected (${sel}) → WAV`, onclick: mixSelected }),
+      mixState.busy ? h('span', { class: 'tag warn', text: 'Mixing…' }) : null),
+    h('div', { class: 'mini', style: 'margin-top:6px', text: 'Tick "Include in mix" on two or more streams (for example both directions of one call). They are converted at the highest selected rate, aligned by when each stream starts in the capture, and summed.' })
+  ];
+  if (mixState.err) kids.push(h('div', { class: 'errbox', text: 'Mix failed: ' + mixState.err }));
+  const r = mixState.res;
+  if (r) {
+    kids.push(h('div', { class: 'okbox', style: 'margin-top:10px', text: 'Mixed ' + r.items.length + ' streams.' }));
+    r.items.forEach(i => kids.push(frow(i.label, 'starts at +' + i.offset.toFixed(3) + ' s')));
+    kids.push(frow('Result', `${fmtDur(r.dur)} · ${r.fs / 1000} kHz · mono`));
+    kids.push(frow('Peak / RMS', `${r.stats.peak} / ${isFinite(r.stats.rmsDb) ? r.stats.rmsDb.toFixed(1) + ' dBFS' : 'silent'}`));
+    if (r.gain < 1) kids.push(h('div', { class: 'warnbox', text: `The sum exceeded full scale, so the whole mix was scaled by ${(20 * Math.log10(r.gain)).toFixed(1)} dB to avoid clipping.` }));
+    kids.push(h('audio', { controls: true, src: r.url }));
+    kids.push(h('div', { class: 'btnrow' },
+      h('button', { class: 'btn small primary', type: 'button', text: 'Download mixed .wav', onclick: () => download(r.wav, r.name, 'audio/wav') })));
+  }
+  el.replaceChildren(...kids.filter(Boolean));
 }
 
 function renderAllPipes() {
   for (const [key, cls] of state.classes) {
     if (!cls.isEVS || !state.analyses.has(key)) continue;
-    buildStage1(key);
+    prepareStream(key);
     renderPipe(key);
   }
+  updateMixBar();
 }
 
 /* ============================================================================
