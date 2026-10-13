@@ -1262,28 +1262,18 @@ function guessFsFromFrames(frames){
   return sawAny ? 16000 : 16000;
 }
 function classifyStream(g){
+  // Strict EVS-only policy: never infer codec identity from RTP payload length.
+  // Dynamic RTP payload types are meaningful only when matched to SDP.
   const sdpCodec = g.sdpMatch ? g.sdpMatch.codec : null;
   const sdpEVS = !!(sdpCodec && sdpCodec.isEVS);
-  let heuristic = 0;
-  if (!sdpEVS){
-    let plausible = 0;
-    for (const p of g.packets){
-      const n = p.rtp.payload.length;
-      if (n === 7 || COMPACT_BYTES.has(n)) plausible++;
-      else if (n >= 8 && n <= 322) plausible += 0.5;
-    }
-    heuristic = g.packets.length ? plausible / g.packets.length : 0;
-  }
-  const confidence = sdpEVS ? 'confirmed'
-    : (heuristic > 0.9 ? 'candidate' : 'unlikely');
   const rtpClock = sdpCodec && sdpCodec.rate ? sdpCodec.rate : 16000;
   const bwFs = sdpCodec ? evsBwToFs(sdpCodec.evsBw) : null;
   const channels = sdpCodec && sdpCodec.evsChannels ? parseInt(sdpCodec.evsChannels, 10) : 1;
   const channelsWarning = channels !== 1
     ? `SDP negotiated channels=${channels}, but reference EVS decoders expect mono audio.`
     : null;
-  return { sdpCodec, sdpEVS, confidence, isEVS: confidence !== 'unlikely',
-           rtpClock, bwFs, channels, channelsWarning, heuristic };
+  return { sdpCodec, sdpEVS, confidence: sdpEVS ? 'confirmed' : 'unlikely',
+           isEVS: sdpEVS, rtpClock, bwFs, channels, channelsWarning, heuristic: 0 };
 }
 function resolveOutputFs(cls, frames){
   if (cls.bwFs) return { fs: cls.bwFs, source: `SDP bw=${cls.sdpCodec.evsBw}` };
@@ -1438,8 +1428,15 @@ async function loadFile(file){
     sipMsgs.sort((a,b) => a.ts - b.ts);
 
     const sdpMedia = collectSdpMedia(sipMsgs);
-    const rtpStreams = analyzeRtpStreams(packets);
-    correlateRTPToSDP(rtpStreams, sdpMedia);
+    const allRtpStreams = analyzeRtpStreams(packets);
+    correlateRTPToSDP(allRtpStreams, sdpMedia);
+
+    // Keep only RTP streams explicitly negotiated as EVS in SDP.
+    // AMR/AMR-WB/G.711 and unknown/unmatched streams are excluded before
+    // payload parsing, frame reconstruction, decoder input generation and UI.
+    const rtpStreams = allRtpStreams.filter(g =>
+      !!(g.sdpMatch && g.sdpMatch.codec && g.sdpMatch.codec.isEVS)
+    );
 
     state.packets = packets;
     state.sip = sipMsgs;
@@ -1484,7 +1481,7 @@ function renderApp() {
   `;
 
   if (!totalRtp) {
-    html += `<div class="warnbox">No RTP streams detected in this capture file.</div>`;
+    html += `<div class="warnbox">No SDP-confirmed EVS RTP streams found. Non-EVS and unknown RTP streams are ignored. Include the SIP/SDP negotiation in the capture so the EVS payload type can be identified safely.</div>`;
   } else {
     html += `<section><h2>RTP / EVS Audio Streams <span class="badge">${totalRtp}</span></h2>`;
     if (evsCount > 1) html += `<div class="card mixbar" id="mixBar"></div>`;
