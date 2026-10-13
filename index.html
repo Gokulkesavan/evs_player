@@ -133,6 +133,13 @@ table.frametable td{padding:3px 8px;border-bottom:1px solid #1c2530}
 .pipe .errbox,.pipe .warnbox{margin:0}
 .mixchk{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;margin-right:6px}
 .mixbar{border-color:#1f6feb55}
+.activity-box{background:linear-gradient(180deg,#0d141c,#0a1017);padding:14px 16px}
+.activity-head{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:11px;letter-spacing:.5px;color:#8cc3ff;margin-bottom:12px}
+.activity-chart{height:78px;display:flex;align-items:flex-end;gap:2px;overflow:hidden;background:repeating-linear-gradient(90deg,#141923 0,#141923 14px,#0b1017 14px,#0b1017 16px);border-radius:6px;padding:0 2px}
+.activity-bar{display:block;flex:1;min-width:1px;background:#34465b;opacity:.7;border-radius:1px 1px 0 0}
+.activity-bar.active{background:#79a9e8;opacity:1}
+.activity-axis{display:flex;justify-content:space-between;color:var(--muted);font:10px var(--mono);margin-top:3px}
+.activity-stats{margin-top:8px}
 .mini{font-size:12px;color:var(--muted)}
 </style>
 </head>
@@ -1486,6 +1493,12 @@ async function loadFile(file){
       }
     }
 
+    // Default to a conversation view: every detected EVS stream is selected.
+    // Users can uncheck streams they do not want in the combined playback.
+    for (const [key, cls] of state.classes) {
+      if (cls.isEVS && state.analyses.has(key)) getPipe(key).mix = true;
+    }
+
     renderApp();
   } catch(err) {
     $('#drop').innerHTML = `<h2>Error reading capture</h2><p style="color:var(--err)">${esc(err.message)}</p>
@@ -1719,10 +1732,11 @@ async function mixSelected() {
     for (let i = 0; i < total; i++) out[i] = Math.round(mix[i] * gain);
     const pcmBytes = pcmToInt16Bytes(out);
     const wav = pcmToWav(pcmBytes, outFs, 1, 's16le');
+    const activity = buildAudioActivity(out, outFs);
     mixState.res = {
       wav, url: URL.createObjectURL(new Blob([wav], { type: 'audio/wav' })), fs: outFs,
-      dur: total / outFs, stats: pcmStats(pcmBytes), gain,
-      name: 'mix_' + items.map(i => i.g.ssrc.toString(16)).join('_') + '.wav',
+      dur: total / outFs, stats: pcmStats(pcmBytes), gain, activity,
+      name: 'conversation-streams-' + items.map(i => i.g.ssrc.toString(16)).join('-') + '.wav',
       items: items.map(i => ({ label: streamLabel(i.g), offset: i.off / outFs }))
     };
   } catch (e) {
@@ -1731,6 +1745,32 @@ async function mixSelected() {
     mixState.busy = false;
     updateMixBar();
   }
+}
+
+/* Build a compact audio-activity envelope from the final mixed PCM. */
+function buildAudioActivity(samples, sampleRate, thresholdDb = -50, buckets = 900) {
+  const step = Math.max(1, Math.floor(samples.length / buckets));
+  const bars = [];
+  let activeSamples = 0, longestSilence = 0, silenceRun = 0;
+  for (let start = 0; start < samples.length; start += step) {
+    const end = Math.min(samples.length, start + step);
+    let peak = 0, sum = 0;
+    for (let i = start; i < end; i++) {
+      const a = Math.abs(samples[i]);
+      if (a > peak) peak = a;
+      sum += samples[i] * samples[i];
+    }
+    const rms = Math.sqrt(sum / Math.max(1, end - start));
+    const db = rms > 0 ? 20 * Math.log10(rms / 32768) : -Infinity;
+    const active = db >= thresholdDb;
+    if (active) { activeSamples += end - start; silenceRun = 0; }
+    else { silenceRun += end - start; longestSilence = Math.max(longestSilence, silenceRun); }
+    bars.push({ peak, db, active });
+  }
+  // Duration/activity is estimated in window-sized buckets, suitable for display.
+  const activeDuration = bars.reduce((n, b) => n + (b.active ? 1 : 0), 0) * (samples.length / sampleRate / bars.length);
+  return { bars, activeDuration, silenceDuration: Math.max(0, samples.length / sampleRate - activeDuration),
+    longestSilence: longestSilence / sampleRate, thresholdDb };
 }
 
 /* -------------------------------------------------------------------- UI */
@@ -1821,9 +1861,23 @@ function updateMixBar() {
     kids.push(frow('Result', `${fmtDur(r.dur)} · ${r.fs / 1000} kHz · mono`));
     kids.push(frow('Peak / RMS', `${r.stats.peak} / ${isFinite(r.stats.rmsDb) ? r.stats.rmsDb.toFixed(1) + ' dBFS' : 'silent'}`));
     if (r.gain < 1) kids.push(h('div', { class: 'warnbox', text: `The sum exceeded full scale, so the whole mix was scaled by ${(20 * Math.log10(r.gain)).toFixed(1)} dB to avoid clipping.` }));
-    kids.push(h('audio', { controls: true, src: r.url }));
+    kids.push(h('div', { class: 'panelbox activity-box', style: 'margin-top:12px' },
+      h('div', { class: 'activity-head' },
+        h('strong', { text: '● AUDIO ACTIVITY' }),
+        h('span', { class: 'mini', text: 'Silence threshold ' + r.activity.thresholdDb + ' dBFS' })),
+      h('div', { class: 'activity-chart', role: 'img', 'aria-label': 'Audio activity waveform; bright bars indicate audio above the silence threshold' },
+        r.activity.bars.map(b => h('span', { class: 'activity-bar' + (b.active ? ' active' : ''),
+          style: 'height:' + Math.max(2, Math.min(100, b.peak / 327.68)) + '%' }))),
+      h('div', { class: 'activity-axis' },
+        h('span', { text: '0 s' }), h('span', { text: fmtDur(r.dur) })),
+      h('div', { class: 'btnrow activity-stats' },
+        h('span', { class: 'tag', text: 'Duration ' + r.dur.toFixed(2) + ' s' }),
+        h('span', { class: 'tag', text: 'Audio ' + r.activity.activeDuration.toFixed(2) + ' s' }),
+        h('span', { class: 'tag', text: 'Silence ' + r.activity.silenceDuration.toFixed(2) + ' s' }),
+        h('span', { class: 'tag', text: 'Longest silence ' + r.activity.longestSilence.toFixed(2) + ' s' }))));
+    kids.push(h('audio', { controls: true, src: r.url, style: 'max-width:100%;width:100%' }));
     kids.push(h('div', { class: 'btnrow' },
-      h('button', { class: 'btn small primary', type: 'button', text: 'Download mixed .wav', onclick: () => download(r.wav, r.name, 'audio/wav') })));
+      h('button', { class: 'btn small primary', type: 'button', text: 'Download conversation WAV', onclick: () => download(r.wav, r.name, 'audio/wav') })));
   }
   el.replaceChildren(...kids.filter(Boolean));
 }
