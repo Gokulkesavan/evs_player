@@ -1209,6 +1209,34 @@ function analyzeRtpStreams(packets){
   out.sort((a, b) => b.count - a.count);
   return out;
 }
+/* Decide codec identity from SDP before RTP stream grouping. This mirrors the
+ * endpoint-first, payload-type-aware matching used by correlateRTPToSDP().
+ * Only packets whose selected SDP mapping is EVS are admitted to RTP analysis. */
+function isSdpNegotiatedEvsPacket(p, sdpMedia){
+  if (!p.rtp) return false;
+  const cands = [];
+  for (const sm of sdpMedia){
+    if (!sm.addr) continue;
+    if (sm.addr.toLowerCase() === p.dst.toLowerCase() && sm.port === p.dstPort){
+      for (const c of sm.codecs) if (c.pt === p.rtp.pt) cands.push({ codec: c, why: 'dst+pt' });
+    }
+    if (sm.addr.toLowerCase() === p.src.toLowerCase() && sm.port === p.srcPort){
+      for (const c of sm.codecs) if (c.pt === p.rtp.pt) cands.push({ codec: c, why: 'src+pt' });
+    }
+  }
+  if (!cands.length){
+    for (const sm of sdpMedia){
+      if (sm.port === p.dstPort || sm.port === p.srcPort){
+        for (const c of sm.codecs) if (c.pt === p.rtp.pt) cands.push({ codec: c, why: 'port+pt' });
+      }
+    }
+  }
+  if (!cands.length) return false;
+  const rank = w => w === 'dst+pt' ? 0 : w === 'src+pt' ? 1 : 2;
+  cands.sort((a, b) => rank(a.why) - rank(b.why));
+  return !!(cands[0].codec && cands[0].codec.isEVS);
+}
+
 function correlateRTPToSDP(streams, sdpMedia){
   for (const g of streams){
     g.sdpMatch = null;
@@ -1428,12 +1456,15 @@ async function loadFile(file){
     sipMsgs.sort((a,b) => a.ts - b.ts);
 
     const sdpMedia = collectSdpMedia(sipMsgs);
-    const allRtpStreams = analyzeRtpStreams(packets);
+
+    // Filter individual RTP packets by the negotiated SDP codec BEFORE
+    // stream grouping/analysis. Non-EVS, unnegotiated, and unknown streams
+    // never enter RTP stream analysis or EVS payload/frame parsing.
+    const evsRtpPackets = packets.filter(p => isSdpNegotiatedEvsPacket(p, sdpMedia));
+    const allRtpStreams = analyzeRtpStreams(evsRtpPackets);
     correlateRTPToSDP(allRtpStreams, sdpMedia);
 
-    // Keep only RTP streams explicitly negotiated as EVS in SDP.
-    // AMR/AMR-WB/G.711 and unknown/unmatched streams are excluded before
-    // payload parsing, frame reconstruction, decoder input generation and UI.
+    // Keep this final guard as defence in depth.
     const rtpStreams = allRtpStreams.filter(g =>
       !!(g.sdpMatch && g.sdpMatch.codec && g.sdpMatch.codec.isEVS)
     );
