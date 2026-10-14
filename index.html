@@ -133,6 +133,18 @@ table.frametable td{padding:3px 8px;border-bottom:1px solid #1c2530}
 .pipe .errbox,.pipe .warnbox{margin:0}
 .mixchk{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;margin-right:6px}
 .mixbar{border-color:#1f6feb55}
+.stream-layout{display:grid;grid-template-columns:minmax(220px,270px) minmax(0,1fr);gap:14px;align-items:start}
+.stream-sidebar{position:sticky;top:12px;align-self:start}
+.stream-sidebar h3{margin:0 0 8px}
+.stream-sidebar details summary{cursor:pointer;font-size:12px;color:var(--text);margin:10px 0}
+.stream-select-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.stream-select-item{display:flex;align-items:flex-start;gap:8px;padding:8px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:12px}
+.stream-select-item input{margin-top:3px}
+.stream-select-item span{display:flex;flex-direction:column;gap:3px;min-width:0;overflow-wrap:anywhere}
+.stream-select-item small{color:var(--muted);font-size:10px}
+.stream-main{min-width:0}
+.stream-card .kv{grid-template-columns:minmax(115px,auto) minmax(0,1fr)}
+@media(max-width:850px){.stream-layout{grid-template-columns:1fr}.stream-sidebar{position:static}.stream-select-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}}
 .activity-box{background:linear-gradient(180deg,#0d141c,#0a1017);padding:14px 16px}
 .activity-head{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:11px;letter-spacing:.5px;color:#8cc3ff;margin-bottom:12px}
 .activity-chart{height:78px;display:flex;align-items:flex-end;gap:2px;overflow:hidden;background:repeating-linear-gradient(90deg,#141923 0,#141923 14px,#0b1017 14px,#0b1017 16px);border-radius:6px;padding:0 2px}
@@ -1527,7 +1539,27 @@ function renderApp() {
   if (!totalRtp) {
     html += `<div class="warnbox">No SDP-confirmed EVS RTP streams found. Non-EVS and unknown RTP streams are ignored. Include the SIP/SDP negotiation in the capture so the EVS payload type can be identified safely.</div>`;
   } else {
-    html += `<section><h2>RTP / EVS Audio Streams <span class="badge">${totalRtp}</span></h2>`;
+    html += `<section><h2>RTP / EVS Audio Streams <span class="badge">${totalRtp}</span></h2>
+      <div class="stream-layout">
+        <aside class="stream-sidebar card">
+          <h3>Streams by SSRC</h3>
+          <p class="mini">Select streams to include in the conversation mix.</p>
+          <details open>
+            <summary>Detected streams (${evsCount})</summary>
+            <div class="stream-select-list">`;
+    for (const g of state.streams) {
+      const cls = state.classes.get(g.key);
+      if (!cls || !cls.isEVS) continue;
+      const selected = !!getPipe(g.key).mix;
+      html += `<label class="stream-select-item">
+        <input type="checkbox" data-stream-key="${esc(g.key)}" ${selected ? 'checked' : ''}>
+        <span><strong>0x${g.ssrc.toString(16)}</strong><small>PT ${g.pt} · ${g.count} packets</small></span>
+      </label>`;
+    }
+    html += `</div></details>
+          <div class="mini" style="margin-top:10px">Selection is equivalent to “Include in mix” on each stream card.</div>
+        </aside>
+        <div class="stream-main">`;
     if (evsCount > 1) html += `<div class="card mixbar" id="mixBar"></div>`;
     for (const g of state.streams) {
       const cls = state.classes.get(g.key);
@@ -1536,9 +1568,18 @@ function renderApp() {
         : (cls.confidence === 'candidate' ? '<span class="tag warn">EVS Candidate</span>' : '<span class="tag">RTP Stream</span>');
 
       const dur = g.lastTs && g.firstTs ? (g.lastTs - g.firstTs) : 0;
+      const rtpSeqs = g.packets.map(p => p.rtp.seq);
+      const rtpTs = g.packets.map(p => p.rtp.ts);
+      const payloadBytes = g.packets.reduce((n, p) => n + p.rtp.payload.length, 0);
+      const avgPayload = g.count ? payloadBytes / g.count : 0;
+      const firstSeq = rtpSeqs.length ? rtpSeqs[0] : 0;
+      const lastSeq = rtpSeqs.length ? rtpSeqs[rtpSeqs.length - 1] : 0;
+      const firstRtpTs = rtpTs.length ? rtpTs[0] : 0;
+      const lastRtpTs = rtpTs.length ? rtpTs[rtpTs.length - 1] : 0;
+      const meanGapMs = g.count > 1 ? (g.packets.slice(1).reduce((n, p, i) => n + Math.max(0, p.ts - g.packets[i].ts), 0) / (g.count - 1) * 1000) : 0;
 
       html += `
-        <div class="card">
+        <div class="card stream-card">
           <h3>
             <span>SSRC: 0x${g.ssrc.toString(16)}</span>
             ${confTag}
@@ -1548,6 +1589,11 @@ function renderApp() {
             <dt>Endpoints:</dt><dd>${esc(g.src)}:${g.sport} → ${esc(g.dst)}:${g.dport}</dd>
             <dt>Packets / Loss:</dt><dd>${g.count} pkts | ${g.lost} lost (${g.lossPct.toFixed(1)}%)</dd>
             <dt>Duration:</dt><dd>${fmtDur(dur)}</dd>
+            <dt>Sequence range:</dt><dd>${firstSeq} – ${lastSeq} (extended ${g.minSeq} – ${g.maxSeq})</dd>
+            <dt>RTP timestamp range:</dt><dd>${firstRtpTs} – ${lastRtpTs}</dd>
+            <dt>Payload size:</dt><dd>${payloadBytes.toLocaleString()} bytes total · ${avgPayload.toFixed(1)} bytes/packet average</dd>
+            <dt>Mean packet interval:</dt><dd>${meanGapMs.toFixed(2)} ms (capture timestamps)</dd>
+            <dt>Destination:</dt><dd>${esc(g.dst)}:${g.dport}</dd>
           </dl>
       `;
 
@@ -1566,10 +1612,21 @@ function renderApp() {
 
       html += `</div>`;
     }
-    html += `</section>`;
+    html += `</div></div></section>`;
   }
 
   container.innerHTML = html;
+  container.querySelectorAll('[data-stream-key]').forEach(input => {
+    input.addEventListener('change', e => {
+      const key = e.currentTarget.getAttribute('data-stream-key');
+      getPipe(key).mix = e.currentTarget.checked;
+      updateMixBar();
+      // Keep the matching per-stream checkbox synchronized.
+      const card = document.getElementById('pipe-' + sidOf(key));
+      const local = card && card.querySelector('input[type="checkbox"]');
+      if (local) local.checked = e.currentTarget.checked;
+    });
+  });
   renderAllPipes();
 }
 
