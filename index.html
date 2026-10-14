@@ -133,6 +133,17 @@ table.frametable td{padding:3px 8px;border-bottom:1px solid #1c2530}
 .pipe .errbox,.pipe .warnbox{margin:0}
 .mixchk{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;margin-right:6px}
 .mixbar{border-color:#1f6feb55}
+.evs-detail-layout{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(250px,.85fr);gap:10px;align-items:start}
+.evs-mode-guide{min-width:0}
+.evs-mode-list{display:flex;flex-direction:column;gap:5px;margin:8px 0 12px}
+.evs-mode-row{display:flex;justify-content:space-between;gap:12px;padding:5px 7px;border-bottom:1px solid #1c2530;font-size:11px}
+.evs-mode-row span{overflow-wrap:anywhere}
+.evs-mode-row strong{white-space:nowrap;color:#8cc3ff;font-family:var(--mono);font-size:10px}
+.evs-learn{font-size:12px}
+.evs-learn summary{cursor:pointer;color:var(--accent);font-weight:600}
+.evs-learn ul{padding-left:18px;color:var(--muted);line-height:1.55}
+.evs-learn li{margin:6px 0}
+@media(max-width:760px){.evs-detail-layout{grid-template-columns:1fr}}
 .stream-layout{display:grid;grid-template-columns:minmax(220px,270px) minmax(0,1fr);gap:14px;align-items:start}
 .stream-sidebar{position:sticky;top:12px;align-self:start}
 .stream-sidebar h3{margin:0 0 8px}
@@ -1562,12 +1573,33 @@ function renderApp() {
       if (cls.isEVS && ana) {
         const res = resolveOutputFs(cls, ana.frames);
         html += `
-          <div class="panelbox" style="margin-top:10px">
-            <h4>EVS Stream Payload Analysis</h4>
-            <div class="frow"><span class="k">Reconstructed Frames</span><span class="v">${ana.total}</span></div>
-            <div class="frow"><span class="k">Lost Fillers (SPEECH_LOST)</span><span class="v">${ana.lostPackets}</span></div>
-            <div class="frow"><span class="k">Suggested Sampling Rate</span><span class="v">${res.fs} Hz (${res.source})</span></div>
-            <div class="pipe" id="pipe-${g.key.replace(/[^a-zA-Z0-9]/g, '_')}"></div>
+          <div class="evs-detail-layout" style="margin-top:10px">
+            <div class="panelbox">
+              <h4>EVS Stream Payload Analysis</h4>
+              <div class="frow"><span class="k">Reconstructed Frames</span><span class="v">${ana.total}</span></div>
+              <div class="frow"><span class="k">Lost Fillers (SPEECH_LOST)</span><span class="v">${ana.lostPackets}</span></div>
+              <div class="frow"><span class="k">Suggested Sampling Rate</span><span class="v">${res.fs} Hz (${res.source})</span></div>
+              <div class="pipe" id="pipe-${g.key.replace(/[^a-zA-Z0-9]/g, '_')}"></div>
+            </div>
+            <aside class="panelbox evs-mode-guide">
+              <h4>Understanding EVS Modes</h4>
+              <p class="mini">Frame modes and rates identified from this stream's RTP payloads.</p>
+              <div class="evs-mode-list">
+                ${ana.rateCounts.map(([label, count]) => `<div class="evs-mode-row"><span>${esc(label)}</span><strong>${count} frame${count === 1 ? '' : 's'}</strong></div>`).join('')}
+              </div>
+              <details class="evs-learn">
+                <summary>Learn what these modes mean</summary>
+                <ul>
+                  <li><strong>EVS Primary:</strong> EVS-native coding modes. The listed bit rate describes the codec's nominal source bit rate, not the RTP packet size or network bandwidth.</li>
+                  <li><strong>EVS AMR-WB IO:</strong> EVS interoperable mode designed to interoperate with AMR-WB. It is still carried and decoded as EVS when negotiated as EVS in SDP; it is not evidence that the stream is ordinary AMR-WB.</li>
+                  <li><strong>SID:</strong> Silence descriptor used during discontinuous transmission (DTX) to describe background noise during silence.</li>
+                  <li><strong>SPEECH_LOST:</strong> A loss/concealment frame inserted by this tool when it infers missing media frames from RTP sequence/timestamp progression. It is not a received speech frame.</li>
+                  <li><strong>NO_DATA:</strong> A frame record carrying no speech data, as defined by the relevant EVS framing.</li>
+                  <li><strong>Reserved:</strong> A frame type reserved for future use; it cannot be interpreted as a normal speech mode.</li>
+                </ul>
+                <p class="hint">Counts are reconstructed frame counts, not packet counts. A single RTP packet may contain multiple codec frames.</p>
+              </details>
+            </aside>
           </div>
         `;
       }
