@@ -203,43 +203,6 @@ table.frametable td{padding:3px 8px;border-bottom:1px solid #1c2530}
 </main>
 
 <div class="container" style="padding-top:0">
-  <div class="divider"></div>
-  <section id="pcmToolSection">
-    <h2>Raw PCM (S16LE) → WAV <span class="badge">Standalone Tool</span></h2>
-    <div class="card">
-      <div class="hint" style="margin-bottom:10px">
-        Drop raw PCM produced by <code>EVS_dec</code> to wrap it as WAV — no ffmpeg required.
-      </div>
-      <div id="pcmDropZone" style="border:2px dashed var(--border);border-radius:10px;padding:22px;text-align:center;background:#0d141c">
-        <div style="color:var(--muted);font-size:13px">
-          Drop a <code>.pcm</code> / <code>.raw</code> file here, or
-          <button class="btn small" type="button" id="pcmPickBtn">browse…</button>
-        </div>
-        <input type="file" id="pcmFileInput" accept=".pcm,.raw,.s16le,.sw,.bin" hidden>
-        <div id="pcmInfo" style="margin-top:10px;font-family:var(--mono);font-size:12px;color:var(--muted)">
-        </div>
-      </div>
-      <div class="inline-fields" style="margin-top:14px">
-        <div><label class="lbl" for="pcmRate">Sample rate (Hz)</label>
-          <input type="number" id="pcmRate" value="16000" min="4000" max="192000" step="1"></div>
-        <div><label class="lbl" for="pcmChannels">Channels</label>
-          <select id="pcmChannels"><option value="1">1 (mono)</option><option value="2">2 (stereo)</option></select></div>
-        <div><label class="lbl" for="pcmFormat">Sample format</label>
-          <select id="pcmFormat">
-            <option value="s16le">s16le (16-bit signed LE)</option>
-            <option value="s16be">s16be (16-bit signed BE)</option>
-            <option value="f32le">f32le (32-bit float LE)</option>
-          </select></div>
-      </div>
-      <div class="btnrow" style="margin-top:14px">
-        <button class="btn ok" id="pcmConvertBtn" type="button" disabled>Convert to WAV</button>
-        <span id="pcmStatus" class="hint"></span>
-      </div>
-      <div id="pcmPlayerContainer" style="margin-top:12px"></div>
-    </div>
-  </section>
-</div>
-
 <script>
 'use strict';
 /* ============================================================================
@@ -1453,7 +1416,6 @@ function pcmStats(pcm) {
  * 12. App Logic & UI Rendering
  * ============================================================================ */
 const state = { packets: [], sip: [], sdpMedia: [], streams: [], classes: new Map(), analyses: new Map() };
-let rawPcmFileBuffer = null;
 
 async function loadFile(file){
   $('#drop').hidden = false;
@@ -1969,41 +1931,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   $('#loadWasmBtn').onclick = () => EVS_WASM.init();
 
-  // Standalone PCM tool setup
-  const pcmInput = $('#pcmFileInput');
-  const pcmBtn = $('#pcmConvertBtn');
-
-  $('#pcmPickBtn').onclick = () => pcmInput.click();
-  pcmInput.onchange = async e => {
-    if (e.target.files.length) {
-      const file = e.target.files[0];
-      rawPcmFileBuffer = new Uint8Array(await file.arrayBuffer());
-      $('#pcmInfo').textContent = `Loaded ${file.name} (${fmtBytes(rawPcmFileBuffer.length)})`;
-      pcmBtn.disabled = false;
-    }
-  };
-
-  pcmBtn.onclick = () => {
-    if (!rawPcmFileBuffer) return;
-    const rate = parseInt($('#pcmRate').value, 10);
-    const channels = parseInt($('#pcmChannels').value, 10);
-    const fmt = $('#pcmFormat').value;
-
-    try {
-      const wavBytes = pcmToWav(rawPcmFileBuffer, rate, channels, fmt);
-      const blob = new Blob([wavBytes], { type: 'audio/wav' });
-      const url = URL.createObjectURL(blob);
-
-      $('#pcmPlayerContainer').innerHTML = `
-        <audio controls src="${url}"></audio><br>
-        <button class="btn small ok" style="margin-top:6px" onclick="download(new Uint8Array(this.wavBuf), 'converted.wav', 'audio/wav')">Download WAV</button>
-      `;
-      $('#pcmPlayerContainer').querySelector('button').wavBuf = wavBytes;
-      $('#pcmStatus').textContent = 'Conversion complete!';
-    } catch(e) {
-      $('#pcmStatus').textContent = 'Error: ' + e.message;
-    }
-  };
 });
 </script>
 </body>
