@@ -278,8 +278,7 @@ pre,.bytes{background:rgba(4,9,14,.9);border-color:var(--line);border-radius:10p
     <p><button class="btn primary" id="pickBtn" type="button">Browse for a capture</button></p>
     <p class="hint" style="margin-top:22px;max-width:640px;margin-left:auto;margin-right:auto;text-align:left">
       Converts to WAV and lets you mix streams. Parses RTP EVS payloads per RFC 8130 / TS 26.445 Annex A (Compact &amp;
-      Header-Full), reassembles the per-stream timeline, fills sequence gaps
-      with SPEECH_LOST for sequence gaps and NO_DATA for DTX timeline gaps, and writes a storage file
+      Header-Full), reconstructs the per-stream timeline, inserts SPEECH_LOST for likely packet loss and NO_DATA for DTX gaps, and writes a storage file
       (<code>#!EVS_MC1.0\n</code> + 4-byte channel count + ToC/speech
       records). Decodes directly in-browser using compiled 3GPP TS 26.443 C code WebAssembly.
     </p>
