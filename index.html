@@ -154,6 +154,91 @@ table.frametable td{padding:3px 8px;border-bottom:1px solid #1c2530}
 .activity-stats{margin-top:8px}
 .mini{font-size:12px;color:var(--muted)}
 </style>
+
+<style id="amr-visual-parity">
+/* Visual-only parity layer: aligns EVS styling with amr_player.
+   Intentionally limited to presentation; decoder, parsing and playback code is unchanged. */
+:root{
+  --bg:#0a0f17;--panel:rgba(15,22,31,.88);--panel2:rgba(19,29,40,.96);
+  --border:rgba(169,187,214,.14);--text:#edf3fb;--muted:#9aa9ba;
+  --accent:#88b8ff;--ok:#6fe6b1;--warn:#efc87e;--err:#ff8c8c;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  --line:var(--border);--line-strong:rgba(169,187,214,.22);
+  --panel-strong:var(--panel2);--panel-soft:rgba(12,18,27,.9);
+  --accent-strong:#5fa1ff;--accent-soft:rgba(95,161,255,.12);
+  --shadow:0 22px 60px rgba(0,0,0,.28);
+}
+html{scroll-behavior:smooth}
+body{
+  min-height:100vh;
+  background:radial-gradient(circle at 15% 20%,rgba(95,161,255,.14),transparent 22%),
+    radial-gradient(circle at 85% 10%,rgba(111,230,177,.08),transparent 18%),
+    linear-gradient(180deg,var(--bg) 0%,#0d1521 100%);
+}
+header{
+  background:rgba(9,14,21,.76);border-bottom:1px solid var(--line);
+  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+  box-shadow:0 8px 30px rgba(0,0,0,.08);padding:12px clamp(16px,2vw,30px);
+}
+header h1{letter-spacing:.04em;color:var(--text);gap:10px}
+header h1 .dot{width:8px;height:8px;background:linear-gradient(180deg,var(--ok),#7eddb5);box-shadow:0 0 14px rgba(111,230,177,.8)}
+header .fn{letter-spacing:.04em}
+.container{width:100%;max-width:1760px;margin:0 auto;padding:20px clamp(16px,1.8vw,30px) 40px}
+.btn{
+  appearance:none;border:1px solid var(--line-strong);
+  background:linear-gradient(180deg,rgba(23,34,47,.96),rgba(17,25,35,.96));
+  border-radius:10px;padding:8px 14px;font-weight:600;letter-spacing:.01em;
+  box-shadow:0 10px 22px rgba(0,0,0,.08);
+  transition:transform .18s ease,border-color .18s ease,background .18s ease,box-shadow .18s ease;
+}
+.btn:hover{transform:translateY(-1px);border-color:rgba(136,184,255,.36);box-shadow:0 16px 28px rgba(34,66,112,.12)}
+.btn.primary{background:linear-gradient(180deg,#6aa8ff,#4e95ff);border-color:rgba(134,184,255,.8);box-shadow:0 14px 28px rgba(78,149,255,.26)}
+.btn.primary:hover{background:linear-gradient(180deg,#76b3ff,#4d8ff3)}
+.btn.ok{background:linear-gradient(180deg,#23b77a,#1e9a68);border-color:rgba(111,230,177,.65)}
+.btn:disabled{opacity:.55;transform:none;box-shadow:none}
+.drop{
+  max-width:720px;margin:11vh auto 0;padding:42px 30px 28px;
+  border:1px solid var(--line);border-radius:18px;
+  background:linear-gradient(180deg,rgba(16,23,32,.92),rgba(10,16,23,.94));
+  box-shadow:var(--shadow);
+}
+.drop.hot{border-color:rgba(136,184,255,.38);background:radial-gradient(circle at top center,rgba(136,184,255,.08),transparent 35%),linear-gradient(180deg,rgba(16,23,32,.94),rgba(10,16,23,.96))}
+.drop h2{font-size:21px;letter-spacing:-.03em}
+.drop code{background:rgba(136,184,255,.08);border:1px solid rgba(136,184,255,.18);border-radius:6px;padding:2px 6px;color:#ddeeff}
+.spinner{width:36px;height:36px;border:2px solid rgba(154,169,186,.15);border-top-color:var(--accent);margin:26px auto 10px}
+.summary{gap:12px;margin-bottom:22px}
+.stat{background:linear-gradient(180deg,rgba(19,27,37,.92),rgba(13,19,27,.96));border-color:var(--line);border-radius:12px;box-shadow:inset 0 1px 0 rgba(255,255,255,.02)}
+.stat .l{font-size:10px;letter-spacing:.14em}
+.stat .v{margin-top:7px;letter-spacing:-.03em}
+section h2{font-size:11px;letter-spacing:.14em;font-weight:700}
+section h2 .badge{background:rgba(136,184,255,.08);border-color:rgba(136,184,255,.18);border-radius:999px;padding:3px 8px;font-size:10px;font-weight:700}
+.card{background:linear-gradient(180deg,rgba(17,25,35,.95),rgba(12,18,26,.95));border-color:var(--line);border-radius:12px;padding:16px 18px;box-shadow:inset 0 1px 0 rgba(255,255,255,.02)}
+.tag{padding:4px 8px;border-radius:7px;background:rgba(255,255,255,.02);border-color:var(--line);font-weight:600;letter-spacing:.04em}
+.tag.ok{color:#9feec1;border-color:rgba(111,230,177,.25);background:rgba(27,81,60,.18)}
+.tag.warn{color:#f1d282;border-color:rgba(239,200,126,.25);background:rgba(86,68,21,.18)}
+.tag.err{color:#ffb2b2;border-color:rgba(255,140,140,.24);background:rgba(90,35,35,.16)}
+.tag.info{color:#bbd6ff;border-color:rgba(136,184,255,.2);background:rgba(14,27,43,.8)}
+.panelbox{background:rgba(8,13,18,.82);border-color:var(--line);border-radius:10px;padding:12px 14px}
+.panelbox h4{font-size:10px;letter-spacing:.12em;font-weight:700}
+.frow{gap:12px;padding:5px 0;border-bottom-color:rgba(154,169,186,.08)}
+pre,.bytes{background:rgba(4,9,14,.9);border-color:var(--line);border-radius:10px;color:#dce6f2}
+.warnbox,.errbox,.okbox,.infobox{border-radius:10px;padding:12px 14px;border-width:1px;line-height:1.6}
+.warnbox{background:rgba(87,67,20,.18);border-color:rgba(239,200,126,.24);color:#efd489}
+.errbox{background:rgba(91,33,33,.18);border-color:rgba(255,140,140,.24);color:#ffc1c1}
+.okbox{background:rgba(19,75,55,.20);border-color:rgba(111,230,177,.24);color:#b5f0d0}
+.infobox{background:rgba(15,25,40,.2);border-color:rgba(136,184,255,.2);color:#c7dcff}
+.wasm-bar{background:linear-gradient(180deg,rgba(19,27,37,.92),rgba(13,19,27,.96));border-color:var(--line);border-radius:12px;box-shadow:inset 0 1px 0 rgba(255,255,255,.02)}
+.stream-sidebar{top:76px}
+.stream-select-item{border-color:var(--line);border-radius:9px;background:rgba(17,26,36,.72);transition:border-color .16s ease,background .16s ease}
+.stream-select-item:hover{border-color:rgba(136,184,255,.34);background:rgba(24,39,56,.86)}
+.stream-select-item input,.check input,.mixchk input{accent-color:var(--accent)}
+.activity-box{background:linear-gradient(180deg,rgba(18,30,47,.82),rgba(10,16,23,.94));border:1px solid var(--line);border-radius:10px}
+.activity-head{color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media(max-width:850px){.stream-sidebar{top:auto}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{transition:none!important;animation-duration:.01ms!important;animation-iteration-count:1!important}}
+</style>
+
 </head>
 <body>
 
