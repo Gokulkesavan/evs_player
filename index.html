@@ -279,7 +279,7 @@ pre,.bytes{background:rgba(4,9,14,.9);border-color:var(--line);border-radius:10p
     <p class="hint" style="margin-top:22px;max-width:640px;margin-left:auto;margin-right:auto;text-align:left">
       Converts to WAV and lets you mix streams. Parses RTP EVS payloads per RFC 8130 / TS 26.445 Annex A (Compact &amp;
       Header-Full), reassembles the per-stream timeline, fills sequence gaps
-      with SPEECH_LOST frames, and writes a storage file
+      with SPEECH_LOST for sequence gaps and NO_DATA for DTX timeline gaps, and writes a storage file
       (<code>#!EVS_MC1.0\n</code> + 4-byte channel count + ToC/speech
       records). Decodes directly in-browser using compiled 3GPP TS 26.443 C code WebAssembly.
     </p>
@@ -1378,49 +1378,70 @@ function resolveOutputFs(cls, frames){
 
 function analyzeEvsStream(g){
   const hfOnly = !!(g.sdpMatch && g.sdpMatch.codec && g.sdpMatch.codec.evsHfOnly === '1');
-  const seen = new Set();
-  const unique = [];
+  const uniqueBySeq = new Map();
   for (const p of g.packets){
-    const k = p.rtp.seq;
-    if (seen.has(k)) continue;
-    seen.add(k);
-    unique.push(p);
+    // Use the extended sequence number where available so a legitimate 16-bit
+    // RTP sequence-number wrap is not mistaken for a duplicate packet.
+    const seqKey = Number.isFinite(p.extSeq) ? p.extSeq : p.rtp.seq;
+    if (uniqueBySeq.has(seqKey)) continue;
+    uniqueBySeq.set(seqKey, p);
   }
+  const unique = [...uniqueBySeq.values()];
   const duplicatesDropped = g.packets.length - unique.length;
 
-  const sorted = unique.slice().sort((a, b) => {
-    let d = a.rtp.seq - b.rtp.seq;
-    if (d < -32768) d += 65536;
-    else if (d > 32768) d -= 65536;
-    return d;
-  });
+  // analyzeRtpStreams() assigns extended sequence numbers in capture order.
+  // Sorting on them is deterministic across RTP sequence-number wrap and
+  // avoids a non-transitive pairwise sequence comparator.
+  const seqOf = p => Number.isFinite(p.extSeq) ? p.extSeq : p.rtp.seq;
+  const sorted = unique.slice().sort((a, b) => seqOf(a) - seqOf(b));
 
-  const FRAME_TS = 320;
+  const FRAME_TS = 320; // 20 ms at the EVS RTP clock rate of 16 kHz
   const MAX_FILL_SEC = 600;
 
   const frames = [], perPacket = [];
-  let lostPackets = 0, parseErrors = 0, lastMode = 0;
-  let lastFrameTs = null;
+  let lostPackets = 0, noDataFillers = 0, parseErrors = 0, lastMode = 0;
+  let lastFrameTs = null, prevExtSeq = null, prevFrameCount = 1;
 
   for (const p of sorted){
-    if (lastFrameTs !== null){
-      const delta = (p.rtp.ts - lastFrameTs) >>> 0;
-      if (delta > FRAME_TS && delta < 16000 * MAX_FILL_SEC){
-        const gapFrames = Math.round(delta / FRAME_TS) - 1;
-        for (let i = 0; i < gapFrames; i++){
-          frames.push({ mode: lastMode, idx: 14, data: null, lost: true,
-                        label: 'SPEECH_LOST (filler)' });
-          lostPackets++;
-        }
-      }
-    }
-
     let parsed;
     try { parsed = parseEvsRtpPayload(p.rtp.payload, hfOnly); }
     catch(e){ parsed = { framing: 'error', frames: [] }; }
     if (!parsed.frames.length) parseErrors++;
 
-    const nframes = parsed.frames.length || 1;
+    const nframes = Math.max(1, parsed.frames.length);
+
+    if (lastFrameTs !== null){
+      const delta = (p.rtp.ts - lastFrameTs) >>> 0;
+      if (delta > FRAME_TS && delta < 16000 * MAX_FILL_SEC){
+        const gapFrames = Math.max(0, Math.round(delta / FRAME_TS) - 1);
+        if (gapFrames > 0){
+          const currentExtSeq = seqOf(p);
+          // A timestamp jump alone is not evidence of packet loss: EVS DTX
+          // omits RTP packets while the media clock continues to advance.
+          // Only sequence-number gaps provide evidence for SPEECH_LOST.
+          const sequenceGap = prevExtSeq === null
+            ? 0
+            : Math.max(0, currentExtSeq - prevExtSeq - 1);
+          // Estimate frames in a missing packet from adjacent observed
+          // packets. The timeline bounds the number of fillers we can add.
+          const framesPerMissingPacket = Math.max(1, prevFrameCount, nframes);
+          const speechLostFrames = Math.min(gapFrames, sequenceGap * framesPerMissingPacket);
+          const noDataFrames = gapFrames - speechLostFrames;
+
+          for (let i = 0; i < speechLostFrames; i++){
+            frames.push({ mode: lastMode, idx: 14, data: null, lost: true,
+                          label: 'SPEECH_LOST (sequence gap)' });
+          }
+          for (let i = 0; i < noDataFrames; i++){
+            frames.push({ mode: lastMode, idx: 15, data: null, lost: false, noData: true,
+                          label: 'NO_DATA (DTX filler)' });
+          }
+          lostPackets += speechLostFrames;
+          noDataFillers += noDataFrames;
+        }
+      }
+    }
+
     for (const fr of parsed.frames){
       frames.push(fr);
       if (!fr.error) lastMode = fr.mode;
@@ -1430,7 +1451,9 @@ function analyzeEvsStream(g){
       framing: parsed.framing, frameCount: parsed.frames.length,
       firstLabel: parsed.frames[0] ? parsed.frames[0].label : null });
 
-    lastFrameTs = p.rtp.ts + (nframes - 1) * FRAME_TS;
+    lastFrameTs = (p.rtp.ts + (nframes - 1) * FRAME_TS) >>> 0;
+    prevExtSeq = seqOf(p);
+    prevFrameCount = nframes;
   }
 
   const counts = new Map();
@@ -1440,10 +1463,9 @@ function analyzeEvsStream(g){
   }
   const rateCounts = [...counts.entries()].sort((a, b) => b[1] - a[1]);
 
-  return { frames, perPacket, lostPackets, parseErrors, duplicatesDropped,
+  return { frames, perPacket, lostPackets, noDataFillers, parseErrors, duplicatesDropped,
            rateCounts, total: frames.length };
 }
-
 /* ============================================================================
  * 11. PCM to WAV conversion tool logic
  * ============================================================================ */
@@ -1651,6 +1673,7 @@ function renderApp() {
             <h4>EVS Stream Payload Analysis</h4>
             <div class="frow"><span class="k">Reconstructed Frames</span><span class="v">${ana.total}</span></div>
             <div class="frow"><span class="k">Lost Fillers (SPEECH_LOST)</span><span class="v">${ana.lostPackets}</span></div>
+            <div class="frow"><span class="k">DTX Fillers (NO_DATA)</span><span class="v">${ana.noDataFillers}</span></div>
             <div class="frow"><span class="k">Suggested Sampling Rate</span><span class="v">${res.fs} Hz (${res.source})</span></div>
             <div class="pipe" id="pipe-${g.key.replace(/[^a-zA-Z0-9]/g, '_')}"></div>
           </div>
